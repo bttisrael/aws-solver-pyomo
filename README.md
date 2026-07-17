@@ -140,7 +140,11 @@ AWS architecture:
 
 ```text
 Internal Application Load Balancer
-  -> FastAPI on ECS/Fargate
+  -> Streamlit operations dashboard on ECS/Fargate
+      -> editable solver configuration and simulation
+      -> macro and detailed optimization results
+      -> daily_programming browser and CSV export
+  -> FastAPI + Pyomo in the same ECS/Fargate task
       -> Aurora DSQL daily_programming input
       -> Pyomo + HiGHS route optimization
       -> Aurora DSQL optimization result tables
@@ -152,6 +156,31 @@ DockerImageAsset -> CDK bootstrap ECR repository -> Fargate task definition
 The load balancer is internal and only accepts traffic from inside its VPC. Add
 an authenticated API Gateway, VPN, or corporate network route before exposing
 the service to external callers.
+
+### Streamlit operations dashboard
+
+The dashboard provides three operator screens:
+
+1. **Solver Configuration** selects the programming date and edits vehicle
+   weight, pallet capacity, solver time limit, and persistence. **Run
+   optimization** executes the Pyomo model and displays immediate scenario KPIs.
+2. **Optimization Results** selects any persisted run, shows macro vehicle,
+   route, box, weight, and occupancy KPIs, presents the vehicle summary, and
+   provides the detailed BASE/TOP operational load plan with CSV export.
+3. **Daily Programming** displays the selected input date with origin and
+   destination filters, totals, and CSV export.
+
+Local execution requires the DSQL variables in the current PowerShell session:
+
+```powershell
+$env:PYTHONPATH = "src"
+streamlit run src\or_aws_fleet\streamlit_app.py
+```
+
+In AWS, the same immutable image runs as two containers in one Fargate task:
+FastAPI listens on port 8080 and Streamlit listens on port 8501. Both use the
+task IAM role for short-lived Aurora DSQL authentication. The internal load
+balancer routes users to Streamlit and checks `/_stcore/health`.
 
 ### Remote image build with CodeBuild
 

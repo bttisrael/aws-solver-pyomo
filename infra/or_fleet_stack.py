@@ -62,8 +62,8 @@ class OrFleetStack(Stack):
         task_definition = ecs.FargateTaskDefinition(
             self,
             "OptimizerTaskDefinition",
-            cpu=1024,
-            memory_limit_mib=2048,
+            cpu=2048,
+            memory_limit_mib=4096,
         )
         bucket.grant_read_write(task_definition.task_role)
 
@@ -89,6 +89,29 @@ class OrFleetStack(Stack):
             },
         )
         container.add_port_mappings(ecs.PortMapping(container_port=8080))
+        dashboard = task_definition.add_container(
+            "dashboard",
+            image=ecs.ContainerImage.from_ecr_repository(image_repository, image_tag),
+            command=[
+                "streamlit",
+                "run",
+                "src/or_aws_fleet/streamlit_app.py",
+                "--server.address=0.0.0.0",
+                "--server.port=8501",
+                "--server.headless=true",
+            ],
+            logging=ecs.LogDrivers.aws_logs(
+                stream_prefix="or-fleet-dashboard",
+                log_group=log_group,
+            ),
+            environment={
+                "DSQL_REGION": dsql_region,
+                "DSQL_CLUSTER_IDENTIFIER": dsql_cluster_identifier,
+                "DSQL_DATABASE": "postgres",
+                "DSQL_DB_USER": "admin",
+            },
+        )
+        dashboard.add_port_mappings(ecs.PortMapping(container_port=8501))
         task_definition.task_role.add_to_policy(
             iam.PolicyStatement(actions=["dsql:GetCluster", "dsql:DbConnectAdmin"], resources=["*"])
         )
@@ -112,8 +135,8 @@ class OrFleetStack(Stack):
         )
         security_group.add_ingress_rule(
             load_balancer_security_group,
-            ec2.Port.tcp(8080),
-            "Allow FastAPI only from the internal load balancer",
+            ec2.Port.tcp(8501),
+            "Allow Streamlit only from the internal load balancer",
         )
 
         service = ecs.FargateService(
@@ -145,10 +168,11 @@ class OrFleetStack(Stack):
         )
         listener = load_balancer.add_listener("HttpListener", port=80, open=False)
         target_group = listener.add_targets(
-            "OptimizerApiTargets",
-            port=8080,
-            targets=[service.load_balancer_target(container_name="optimizer", container_port=8080)],
-            health_check=elbv2.HealthCheck(path="/health", healthy_http_codes="200"),
+            "OptimizerDashboardTargets",
+            port=8501,
+            protocol=elbv2.ApplicationProtocol.HTTP,
+            targets=[service.load_balancer_target(container_name="dashboard", container_port=8501)],
+            health_check=elbv2.HealthCheck(path="/_stcore/health", healthy_http_codes="200"),
             deregistration_delay=Duration.seconds(30),
         )
 
@@ -157,4 +181,4 @@ class OrFleetStack(Stack):
         CfnOutput(self, "ServiceName", value=service.service_name)
         CfnOutput(self, "TargetGroupArn", value=target_group.target_group_arn)
         CfnOutput(self, "TaskDefinitionArn", value=task_definition.task_definition_arn)
-        CfnOutput(self, "OptimizerInternalApiUrl", value=f"http://{load_balancer.load_balancer_dns_name}")
+        CfnOutput(self, "OptimizerInternalDashboardUrl", value=f"http://{load_balancer.load_balancer_dns_name}")
