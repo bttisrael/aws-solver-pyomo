@@ -359,8 +359,7 @@ Google Sheets tab and creates/loads the retained Aurora DSQL table:
 
 - `VEHICLE MASTER DATA` -> `logistics.vehicle_master_data`
 
-The former `master_data_sku_random` and `dc_1`/`dc_2`/`dc_3` tables are retired.
-The optimizer now uses `logistics.daily_programming` as its demand input.
+The optimizer uses `logistics.daily_programming` as its demand input.
 
 Setup:
 
@@ -389,7 +388,7 @@ Then in the Aurora DSQL query editor:
 SELECT * FROM logistics.vehicle_master_data LIMIT 20;
 ```
 
-Legacy DSQL demand tables can be removed idempotently with:
+The one-time DSQL cleanup migration is available at:
 
 ```powershell
 python scripts\drop_legacy_dsql_tables.py
