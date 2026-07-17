@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions OIDC deployment role for bttisrael/aws-solver-pyomo
+
+Parameters:
+  GitHubOrganization:
+    Type: String
+    Default: bttisrael
+  GitHubRepository:
+    Type: String
+    Default: aws-solver-pyomo
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: Supply the account's existing GitHub OIDC provider ARN, if present.
+
+Conditions:
+  CreateOidcProvider: !Equals [!Ref ExistingGitHubOidcProviderArn, ""]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList: [6938fd4d98bab03faadb97b34396831e3780aea1]
+
+  GitHubProductionDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-solver-pyomo-github-production
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrganization}/${GitHubRepository}:environment:production
+      Policies:
+        - PolicyName: InvokeProductionDelivery
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AssumeCdkBootstrapRoles
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-*
+              - Sid: RunAndObserveCodeBuild
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !Sub arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/or-fleet-optimizer-image-build
+              - Sid: VerifyDeployment
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - ecs:DescribeServices
+                  - elasticloadbalancing:DescribeTargetHealth
+                Resource: "*"
+
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt GitHubProductionDeployRole.Arn
+    Description: Set this as the AWS_DEPLOY_ROLE_ARN GitHub Actions repository variable.

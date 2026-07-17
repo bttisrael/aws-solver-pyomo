@@ -1,7 +1,12 @@
 boto3>=1.43.40
+fastapi>=0.128.0
 highspy==1.8.1
 numpy==2.2.1
 pandas==2.2.3
 pyomo==6.8.2
 psycopg[binary]>=3.3.4
+pg8000>=1.31.5
+pydantic>=2.11.9,<2.12
+uvicorn[standard]>=0.41.0
+streamlit>=1.41.0,<2.0
 google-auth>=2.0.0

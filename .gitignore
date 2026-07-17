@@ -13,6 +13,12 @@ data/
 cdk.out/
 .cdk.staging/
 .env
+*.env
+!.env.example
+service-account*.json
+credentials*.json
+*.pem
+*.key
 
 *.log
 *.tmp

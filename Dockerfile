@@ -11,4 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
 
-CMD ["python", "-m", "or_aws_fleet.main"]
+EXPOSE 8080 8501
+
+CMD ["uvicorn", "or_aws_fleet.api:app", "--host", "0.0.0.0", "--port", "8080"]
