@@ -89,6 +89,12 @@ class OptimizerBuildStack(Stack):
             ),
         )
         self.repository.grant_pull_push(self.build_project)
+        self.build_project.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["ecr:DescribeImages"],
+                resources=[self.repository.repository_arn],
+            )
+        )
         source_asset.grant_read(self.build_project)
         self.build_project.add_to_role_policy(
             iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"])

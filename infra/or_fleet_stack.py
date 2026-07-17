@@ -11,6 +11,7 @@ from aws_cdk import (
     aws_elasticloadbalancingv2 as elbv2,
     aws_iam as iam,
     aws_logs as logs,
+    aws_lambda as lambda_,
     aws_s3 as s3,
 )
 from constructs import Construct
@@ -129,9 +130,9 @@ class OrFleetStack(Stack):
             allow_all_outbound=True,
         )
         load_balancer_security_group.add_ingress_rule(
-            ec2.Peer.ipv4(vpc.vpc_cidr_block),
+            ec2.Peer.any_ipv4(),
             ec2.Port.tcp(80),
-            "Allow HTTP only from inside the optimizer VPC",
+            "Allow public HTTP access to the time-limited portfolio dashboard",
         )
         security_group.add_ingress_rule(
             load_balancer_security_group,
@@ -144,14 +145,14 @@ class OrFleetStack(Stack):
             "OptimizerApiService",
             cluster=cluster,
             task_definition=task_definition,
-            desired_count=1,
+            desired_count=0,
             assign_public_ip=True,
             security_groups=[security_group],
             circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
             min_healthy_percent=100,
             max_healthy_percent=200,
         )
-        scaling = service.auto_scale_task_count(min_capacity=1, max_capacity=2)
+        scaling = service.auto_scale_task_count(min_capacity=0, max_capacity=1)
         scaling.scale_on_cpu_utilization(
             "CpuScaling",
             target_utilization_percent=65,
@@ -163,7 +164,7 @@ class OrFleetStack(Stack):
             self,
             "OptimizerApiLoadBalancer",
             vpc=vpc,
-            internet_facing=False,
+            internet_facing=True,
             security_group=load_balancer_security_group,
         )
         listener = load_balancer.add_listener("HttpListener", port=80, open=False)
@@ -176,9 +177,45 @@ class OrFleetStack(Stack):
             deregistration_delay=Duration.seconds(30),
         )
 
+        stop_function = lambda_.Function(
+            self,
+            "PortfolioDemoStopFunction",
+            function_name="or-fleet-stop-portfolio-demo",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="index.handler",
+            code=lambda_.Code.from_inline(
+                "import os\n"
+                "import boto3\n\n"
+                "def handler(event, context):\n"
+                "    boto3.client('ecs').update_service(\n"
+                "        cluster=os.environ['ECS_CLUSTER'],\n"
+                "        service=os.environ['ECS_SERVICE'],\n"
+                "        desiredCount=0,\n"
+                "    )\n"
+                "    return {'desired_count': 0}\n"
+            ),
+            timeout=Duration.seconds(30),
+            environment={
+                "ECS_CLUSTER": cluster.cluster_name,
+                "ECS_SERVICE": service.service_name,
+            },
+        )
+        stop_function.add_to_role_policy(
+            iam.PolicyStatement(actions=["ecs:UpdateService"], resources=[service.service_arn])
+        )
+        scheduler_role = iam.Role(
+            self,
+            "PortfolioDemoSchedulerRole",
+            role_name="or-fleet-demo-scheduler",
+            assumed_by=iam.ServicePrincipal("scheduler.amazonaws.com"),
+        )
+        stop_function.grant_invoke(scheduler_role)
+
         CfnOutput(self, "ArtifactsBucketName", value=bucket.bucket_name)
         CfnOutput(self, "ClusterName", value=cluster.cluster_name)
         CfnOutput(self, "ServiceName", value=service.service_name)
         CfnOutput(self, "TargetGroupArn", value=target_group.target_group_arn)
         CfnOutput(self, "TaskDefinitionArn", value=task_definition.task_definition_arn)
-        CfnOutput(self, "OptimizerInternalDashboardUrl", value=f"http://{load_balancer.load_balancer_dns_name}")
+        CfnOutput(self, "OptimizerPublicDashboardUrl", value=f"http://{load_balancer.load_balancer_dns_name}")
+        CfnOutput(self, "PortfolioStopFunctionArn", value=stop_function.function_arn)
+        CfnOutput(self, "PortfolioSchedulerRoleArn", value=scheduler_role.role_arn)

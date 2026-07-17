@@ -76,6 +76,25 @@ Resources:
                   - ecs:DescribeServices
                   - elasticloadbalancing:DescribeTargetHealth
                 Resource: "*"
+              - Sid: ControlPortfolioDemo
+                Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/*/*
+              - Sid: SchedulePortfolioDemoStop
+                Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:GetSchedule
+                  - scheduler:DeleteSchedule
+                Resource: !Sub arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/or-fleet-demo-stop-*
+              - Sid: PassPortfolioSchedulerRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/or-fleet-demo-scheduler
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: scheduler.amazonaws.com
 
 Outputs:
   DeployRoleArn:
