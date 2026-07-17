@@ -313,7 +313,6 @@ def main() -> None:
         raise RuntimeError("--batch-size must be between 1 and 3000 for Aurora DSQL.")
 
     google_creds = auth_google()
-    sku_rows: list[tuple[Any, ...]] = []
     vehicle_rows: list[tuple[Any, ...]] = []
 
     if not args.skip_master:
