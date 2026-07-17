@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS logistics.daily_programming (
     material_weight INTEGER NOT NULL,
     total_weight_kg NUMERIC(16, 3) NOT NULL,
     total_pallets NUMERIC(16, 6) NOT NULL,
-    total_boxes NUMERIC(16, 6) NOT NULL
+    total_boxes NUMERIC(16, 6) NOT NULL,
+    total_volume_m3 NUMERIC(16, 6) NOT NULL,
+    google_driving_distance_km NUMERIC(10, 2) NOT NULL
 )
 """.strip()
 
@@ -84,7 +86,8 @@ INSERT_PROGRAMMING_SQL = """
 INSERT INTO logistics.daily_programming (
     demand_id, origin, destiny, cod_material, date, time_to_ship_days, units,
     qty_by_box, qty_by_pallet, material_weight,
-    total_weight_kg, total_pallets, total_boxes
+    total_weight_kg, total_pallets, total_boxes, total_volume_m3,
+    google_driving_distance_km
 )
 SELECT
     demand.demand_id,
@@ -99,10 +102,15 @@ SELECT
     master.material_weight,
     ROUND((demand.units * master.material_weight)::NUMERIC / 1000, 3),
     ROUND(demand.units::NUMERIC / (master.qty_by_box * master.qty_by_pallet), 6),
-    ROUND(demand.units::NUMERIC / master.qty_by_box, 6)
+    ROUND(demand.units::NUMERIC / master.qty_by_box, 6),
+    ROUND((demand.units::NUMERIC / master.qty_by_box) * master.box_volume, 6),
+    route.google_driving_distance_km
 FROM logistics.daily_demand AS demand
 JOIN logistics.master_data AS master
     ON master.cod_material = demand.cod_material
+JOIN logistics.route AS route
+    ON route.origin = demand.origin
+    AND route.destiny = demand.destiny
 WHERE demand.date = %s
 """.strip()
 

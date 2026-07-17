@@ -1,4 +1,4 @@
-from or_aws_fleet.programming_model import ProgrammingLine, solve_route
+from or_aws_fleet.programming_model import ProgrammingLine, VehicleType, solve_route
 
 
 def line(number: int, weight: float, pallets: float) -> ProgrammingLine:
@@ -33,3 +33,38 @@ def test_solver_rejects_line_larger_than_vehicle() -> None:
         assert "exceed" in str(exc)
     else:
         raise AssertionError("Expected oversized demand to be rejected")
+
+
+def test_solver_selects_vehicle_type_using_count_capacity_and_route_cost() -> None:
+    vehicles = [
+        VehicleType("Light van", 3.2, 650, 2.8, 2),
+        VehicleType("Cargo van", 8, 1_200, 4.2, 5),
+        VehicleType("Box truck", 45, 10_000, 12, 30),
+    ]
+    lines = [line(1, 600, 2), line(2, 600, 2)]
+    solution = solve_route(
+        lines,
+        vehicle_types=vehicles,
+        distance_km=100,
+        vehicle_count_weight=1,
+        freight_cost_weight=0.001,
+        time_limit_seconds=10,
+    )
+    assert len(solution.vehicles) == 1
+    assert solution.vehicles[0].vehicle_type == "Cargo van"
+    assert solution.vehicles[0].freight_cost == 420
+
+
+def test_solver_enforces_cubic_volume_capacity() -> None:
+    vehicles = [
+        VehicleType("Cargo van", 8, 1_200, 4.2, 5),
+        VehicleType("Box truck", 45, 10_000, 12, 30),
+    ]
+    oversized_volume = line(1, 700, 2)
+    oversized_volume = ProgrammingLine(
+        **{**oversized_volume.__dict__, "total_volume_m3": 9}
+    )
+    solution = solve_route(
+        [oversized_volume], vehicle_types=vehicles, distance_km=50, time_limit_seconds=10
+    )
+    assert solution.vehicles[0].vehicle_type == "Box truck"
