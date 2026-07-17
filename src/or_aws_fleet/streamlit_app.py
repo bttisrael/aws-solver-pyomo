@@ -20,7 +20,12 @@ from or_aws_fleet.dashboard_data import (
 )
 
 
-st.set_page_config(page_title="Beverage Load Optimizer", page_icon="🚚", layout="wide")
+st.set_page_config(
+    page_title="Beverage Load Optimizer",
+    page_icon="🚚",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 st.markdown(
     """
     <style>
@@ -133,6 +138,10 @@ def configuration_screen() -> None:
 
 def results_screen() -> None:
     st.title("📊 Optimization Results")
+    st.button(
+        "← Run another simulation",
+        on_click=lambda: st.session_state.update(navigation_screen="Solver Configuration"),
+    )
     runs = get_runs()
     if runs.empty:
         st.info("Run an optimization to create the first result.")
@@ -325,6 +334,7 @@ st.sidebar.caption(f"Updated {datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-
 screen = st.sidebar.radio(
     "Navigation",
     ["Solver Configuration", "Optimization Results", "Forecast Optimized", "Daily Programming"],
+    key="navigation_screen",
 )
 
 try:
