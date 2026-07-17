@@ -30,7 +30,9 @@ Amazon Aurora DSQL
 The production forecast is refreshed every day but the model is not retrained
 every day. The inexpensive `seasonal-naive-v1` champion uses recent observations
 from the same weekday and produces P10, P50, and P90 demand for each
-origin/destination/SKU series. P50 drives the expected plan; P90 provides a
+origin/destination/SKU series active in the latest operational snapshot. This
+active-series guard avoids forecasting the large sparse cartesian product of
+historical synthetic orders. P50 drives the expected plan; P90 provides a
 conservative capacity plan.
 
 AutoML retraining is recommended only after three consecutive failed monitoring

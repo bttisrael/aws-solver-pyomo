@@ -53,3 +53,11 @@ def test_metrics_and_retraining_require_three_failures_and_cooldown() -> None:
 def test_healthy_metrics_do_not_trigger_retraining() -> None:
     metrics = ForecastMetrics(wape=0.10, mase=0.7, bias=0.01, interval_coverage=0.80)
     assert not retraining_decision(metrics, consecutive_failures=10, days_since_training=30).should_retrain
+
+
+def test_forecast_excludes_series_not_active_in_latest_snapshot() -> None:
+    history = history_frame()
+    inactive = history.iloc[[0]].copy()
+    inactive["cod_material"] = "INACTIVE_SKU"
+    result = seasonal_naive_forecast(pd.concat([history, inactive], ignore_index=True), date(2026, 5, 20))
+    assert "INACTIVE_SKU" not in result["cod_material"].tolist()
