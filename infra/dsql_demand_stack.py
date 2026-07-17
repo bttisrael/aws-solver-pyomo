@@ -36,6 +36,7 @@ class DsqlDailyDemandStack(Stack):
                 "LOCAL_TIMEZONE": "America/Sao_Paulo",
                 "BASELINE_DEMAND_ROWS": "1000",
                 "DEMAND_SEED": "271828",
+                "DEMAND_UNITS_MULTIPLIER": "4",
             },
         )
         demand_function.add_to_role_policy(
