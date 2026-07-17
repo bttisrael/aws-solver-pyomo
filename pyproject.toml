@@ -14,6 +14,7 @@ dependencies = [
   "pandas==2.2.3",
   "pyomo==6.8.2",
   "psycopg[binary]>=3.3.4",
+  "python-dotenv>=1.0.0",
   "google-auth>=2.0.0",
 ]
 

@@ -178,7 +178,13 @@ def choose_case_count(rng: random.Random, seasonal_factor: float) -> int:
     return max(1, round(rng.triangular(1, 30, 8) * (0.72 + 0.28 * seasonal_factor)))
 
 
-def generate_rows(run_date: date, materials: list[tuple[str, int]], baseline_rows: int, seed: int):
+def generate_rows(
+    run_date: date,
+    materials: list[tuple[str, int]],
+    baseline_rows: int,
+    seed: int,
+    units_multiplier: int,
+):
     factor = demand_factor(run_date, seed)
     row_count = max(len(FACTORIES) * len(DISTRIBUTION_CENTERS), round(baseline_rows * factor))
     rng = random.Random(stable_seed(run_date, seed))
@@ -194,7 +200,7 @@ def generate_rows(run_date: date, materials: list[tuple[str, int]], baseline_row
             destiny = rng.choices(DISTRIBUTION_CENTERS, weights=(8, 11, 12, 17, 15, 10, 8, 10, 9), k=1)[0]
         material_pool = popular if rng.random() < 0.72 else materials
         cod_material, qty_by_box = rng.choice(material_pool)
-        units = qty_by_box * choose_case_count(rng, factor)
+        units = qty_by_box * choose_case_count(rng, factor) * units_multiplier
         rows.append(
             (
                 f"DEM-{run_date:%Y%m%d}-{sequence:06d}",
@@ -244,6 +250,11 @@ def lambda_handler(event, context):
     dry_run = bool(event.get("dry_run", False))
     baseline_rows = int(event.get("baseline_rows") or os.getenv("BASELINE_DEMAND_ROWS", "1000"))
     seed = int(event.get("seed") or os.getenv("DEMAND_SEED", "271828"))
+    units_multiplier = int(
+        event.get("units_multiplier") or os.getenv("DEMAND_UNITS_MULTIPLIER", "4")
+    )
+    if units_multiplier < 1:
+        raise ValueError("DEMAND_UNITS_MULTIPLIER must be at least 1.")
     region = aws_region()
     endpoint = resolve_dsql_endpoint(region)
 
@@ -251,7 +262,9 @@ def lambda_handler(event, context):
     try:
         ensure_table(conn)
         materials = load_materials(conn)
-        rows, factor = generate_rows(run_date, materials, baseline_rows, seed)
+        rows, factor = generate_rows(
+            run_date, materials, baseline_rows, seed, units_multiplier
+        )
         programming_rows = 0
         if not dry_run:
             replace_daily_rows(conn, run_date, rows)
@@ -268,6 +281,7 @@ def lambda_handler(event, context):
         "available_materials": len(materials),
         "seasonal_factor": round(factor, 6),
         "time_to_ship_days": 3,
+        "units_multiplier": units_multiplier,
         "table": "logistics.daily_demand",
         "programming_table": "logistics.daily_programming",
         "programming_rows": programming_rows,

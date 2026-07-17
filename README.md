@@ -429,3 +429,11 @@ cd infra
 npx aws-cdk@2.176.0 deploy DsqlDailyDemandStack --app "python dsql_demand_app.py" --require-approval never
 ```
 
+Demand volume is calibrated with `DEMAND_UNITS_MULTIPLIER=4`. The versioned
+historical migration is idempotent and records each completed table/date step:
+
+```powershell
+$env:PYTHONPATH = "src"
+python scripts\scale_beverage_demand.py --through-date 2026-07-17
+```
+
