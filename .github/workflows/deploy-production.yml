@@ -89,6 +89,12 @@ jobs:
           TARGET_GROUP=$(aws cloudformation describe-stacks --stack-name OrFleetOptimizationStack \
             --query "Stacks[0].Outputs[?OutputKey=='TargetGroupArn'].OutputValue" --output text)
           aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          if [ "$DESIRED" = "0" ]; then
+            echo "Portfolio dashboard deployed in standby mode."
+            exit 0
+          fi
           HEALTH=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP" \
             --query 'TargetHealthDescriptions[].TargetHealth.State' --output text)
           echo "Target health: ${HEALTH}"

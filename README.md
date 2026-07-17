@@ -139,7 +139,7 @@ logistics.optimization_line_assignments
 AWS architecture:
 
 ```text
-Internal Application Load Balancer
+Internet-facing Application Load Balancer
   -> Streamlit operations dashboard on ECS/Fargate
       -> editable solver configuration and simulation
       -> macro and detailed optimization results
@@ -153,9 +153,32 @@ Internal Application Load Balancer
 DockerImageAsset -> CDK bootstrap ECR repository -> Fargate task definition
 ```
 
-The load balancer is internal and only accepts traffic from inside its VPC. Add
-an authenticated API Gateway, VPN, or corporate network route before exposing
-the service to external callers.
+The portfolio dashboard is public only during owner-started demo sessions. The
+ECS service normally stays at zero tasks. Run the **Start portfolio demo** GitHub
+Actions workflow to authenticate through GitHub OIDC, start one task, and create
+an EventBridge one-time schedule that stops it automatically after two hours.
+Only Streamlit is registered with the public load balancer; FastAPI and Aurora
+DSQL are not directly exposed. Use only synthetic/non-confidential portfolio data.
+
+Portfolio controls:
+
+```text
+Start button: https://github.com/bttisrael/aws-solver-pyomo/actions/workflows/start-portfolio-demo.yml
+Default session: 2 hours
+Standby ECS desired count: 0
+Maximum running tasks: 1
+```
+
+To expose this as a portfolio button, link the button to the workflow-dispatch
+URL above. GitHub authenticates the owner, then the workflow assumes the AWS
+deployment role through OIDC, starts the ECS task, and schedules the stop.
+The workflow never receives or stores an AWS access key.
+
+```html
+<a href="https://github.com/bttisrael/aws-solver-pyomo/actions/workflows/start-portfolio-demo.yml">
+  <button>Live app (2-hour demo)</button>
+</a>
+```
 
 ### Streamlit operations dashboard
 
@@ -179,7 +202,7 @@ streamlit run src\or_aws_fleet\streamlit_app.py
 
 In AWS, the same immutable image runs as two containers in one Fargate task:
 FastAPI listens on port 8080 and Streamlit listens on port 8501. Both use the
-task IAM role for short-lived Aurora DSQL authentication. The internal load
+   task IAM role for short-lived Aurora DSQL authentication. The public load
 balancer routes users to Streamlit and checks `/_stcore/health`.
 
 ### Remote image build with CodeBuild
@@ -331,10 +354,12 @@ optimization, durable outputs, logs, and infrastructure as code.
 
 ## Upload Google Sheets data to Aurora DSQL
 
-The uploader in `scripts/upload_sheets_to_dsql.py` reads these Google Sheets tabs and creates/loads two Aurora DSQL tables in schema `logistics`:
+The uploader in `scripts/upload_sheets_to_dsql.py` reads the `VEHICLE MASTER DATA`
+Google Sheets tab and creates/loads the retained Aurora DSQL table:
 
-- `MASTER DATA - SKU RANDOM` -> `logistics.master_data_sku_random`
 - `VEHICLE MASTER DATA` -> `logistics.vehicle_master_data`
+
+The optimizer uses `logistics.daily_programming` as its demand input.
 
 Setup:
 
@@ -351,7 +376,7 @@ Dry-run first:
 python scripts\upload_sheets_to_dsql.py --dry-run
 ```
 
-Upload/replace both tables:
+Upload/replace the vehicle table:
 
 ```powershell
 python scripts\upload_sheets_to_dsql.py --replace
@@ -360,35 +385,13 @@ python scripts\upload_sheets_to_dsql.py --replace
 Then in the Aurora DSQL query editor:
 
 ```sql
-SELECT * FROM logistics.master_data_sku_random LIMIT 20;
 SELECT * FROM logistics.vehicle_master_data LIMIT 20;
 ```
 
-## Daily Aurora DSQL demand insertion
-
-The deployed AWS schedule `daily-dsql-demand-0000` runs every day at `00:00 America/Sao_Paulo` and invokes a Lambda function that inserts new demand rows into:
-
-```sql
-logistics.dc_1
-logistics.dc_2
-logistics.dc_3
-```
-
-The Lambda reads available SKUs directly from `logistics.master_data_sku_random` on every run, so generated orders only use SKUs that exist in the current master data. Each run replaces rows for its own run date before inserting, which keeps reruns idempotent.
-
-Daily order ranges:
-
-```text
-DC_1: 77-137 orders/day
-DC_2: 68-113 orders/day
-DC_3: 72-126 orders/day
-```
-
-Local dry-run:
+The one-time DSQL cleanup migration is available at:
 
 ```powershell
-cd C:\Users\israb\Documents\OR-production-AWS\lambda\dsql_daily_demand
-python -c "import handler; print(handler.lambda_handler({'dry_run': True, 'run_date': '2026-07-06'}, None))"
+python scripts\drop_legacy_dsql_tables.py
 ```
 
 Package Lambda dependencies and deploy/update the Lambda schedule:

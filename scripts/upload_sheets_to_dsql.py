@@ -254,16 +254,14 @@ def execute_ddl(conn: psycopg.Connection, sql: str) -> None:
 def recreate_tables(conn: psycopg.Connection) -> None:
     for sql in (
         "DROP TABLE IF EXISTS logistics.master_data_sku_random",
-        "DROP TABLE IF EXISTS logistics.vehicle_master_data",
         SCHEMA_SQL,
-        SKU_TABLE_SQL,
         VEHICLE_TABLE_SQL,
     ):
         execute_ddl(conn, sql)
 
 
 def ensure_tables(conn: psycopg.Connection) -> None:
-    for sql in (SCHEMA_SQL, SKU_TABLE_SQL, VEHICLE_TABLE_SQL):
+    for sql in (SCHEMA_SQL, VEHICLE_TABLE_SQL):
         execute_ddl(conn, sql)
 
 
@@ -315,13 +313,10 @@ def main() -> None:
         raise RuntimeError("--batch-size must be between 1 and 3000 for Aurora DSQL.")
 
     google_creds = auth_google()
-    sku_rows: list[tuple[Any, ...]] = []
     vehicle_rows: list[tuple[Any, ...]] = []
 
     if not args.skip_master:
-        sku_headers, sku_raw_rows = read_sheet_table(google_creds, SKU_TAB, "A1:K90892")
-        sku_rows = prepare_sku_rows(sku_headers, sku_raw_rows)
-        print(f"prepared SKU rows: {len(sku_rows)}")
+        print("master SKU upload is disabled; use daily_programming as the optimizer input")
 
     if not args.skip_vehicle:
         vehicle_headers, vehicle_raw_rows = read_sheet_table(google_creds, VEHICLE_TAB, "A1:D100")
@@ -351,16 +346,6 @@ def main() -> None:
                 VEHICLE_COLUMNS,
                 "vehicle_type",
                 vehicle_rows,
-                args.batch_size,
-            )
-
-        if sku_rows:
-            upsert_rows(
-                conn,
-                "logistics.master_data_sku_random",
-                SKU_COLUMNS,
-                "sku",
-                sku_rows,
                 args.batch_size,
             )
 
