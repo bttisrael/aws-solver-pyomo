@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
-from or_aws_fleet.api import SolveRequest, solve
+from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve
 from or_aws_fleet.dashboard_data import (
     available_programming_dates,
     daily_programming,
@@ -16,6 +16,7 @@ from or_aws_fleet.dashboard_data import (
     latest_forecast_run,
     operational_load_plan,
     optimization_runs,
+    vehicle_master_data,
     vehicle_summary,
 )
 
@@ -52,6 +53,11 @@ def get_runs():
     return optimization_runs()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_vehicle_master():
+    return vehicle_master_data()
+
+
 def date_selector(key: str):
     dates = get_dates()
     if not dates:
@@ -62,22 +68,50 @@ def date_selector(key: str):
 
 def configuration_screen() -> None:
     st.title("⚙️ Solver Configuration")
-    st.caption("Edit the operating limits and run a new scenario without changing code.")
+    st.caption("Edit every vehicle type and optimize fleet count plus route freight cost.")
     programming_date = date_selector("configuration_date")
+    vehicles = get_vehicle_master().copy()
+    if vehicles.empty:
+        st.error("No vehicle types are available in logistics.vehicle_master_data.")
+        return
+    vehicles.insert(0, "enabled", True)
 
     with st.form("solver_configuration"):
+        st.markdown('<div class="section-title">Vehicle fleet parameters</div>', unsafe_allow_html=True)
+        edited_vehicles = st.data_editor(
+            vehicles,
+            hide_index=True,
+            use_container_width=True,
+            disabled=["vehicle_type"],
+            column_config={
+                "enabled": st.column_config.CheckboxColumn("Enabled"),
+                "vehicle_type": st.column_config.TextColumn("Vehicle type"),
+                "vehicle_capacity_m3": st.column_config.NumberColumn(
+                    "Capacity (mÂ³)", min_value=0.01, format="%.2f"
+                ),
+                "vehicle_capacity_kg": st.column_config.NumberColumn(
+                    "Capacity (kg)", min_value=1.0, format="%.0f"
+                ),
+                "freight_cost_per_km": st.column_config.NumberColumn(
+                    "Freight cost/km", min_value=0.0, format="%.2f"
+                ),
+                "vehicle_capacity_pallets": st.column_config.NumberColumn(
+                    "Pallet capacity", min_value=1.0, format="%.0f"
+                ),
+            },
+            key="vehicle_configuration_editor",
+        )
         left, middle, right = st.columns(3)
         with left:
-            max_weight = st.number_input(
-                "Maximum vehicle weight (kg)", min_value=1_000.0, max_value=80_000.0,
-                value=25_000.0, step=500.0,
-                help="Maximum total product weight assigned to one vehicle.",
+            vehicle_count_weight = st.number_input(
+                "Vehicle-count weight", min_value=0.001, value=1.0, step=0.1,
+                help="Penalty applied to each activated vehicle.",
             )
         with middle:
-            max_pallets = st.number_input(
-                "Maximum pallet positions", min_value=1.0, max_value=120.0,
-                value=60.0, step=1.0,
-                help="Maximum pallet-equivalent capacity assigned to one vehicle.",
+            freight_cost_weight = st.number_input(
+                "Freight-cost weight", min_value=0.0, value=0.001, step=0.001,
+                format="%.4f",
+                help="Multiplier applied to distance Ã— freight cost/km.",
             )
         with right:
             time_limit = st.number_input(
@@ -92,8 +126,9 @@ def configuration_screen() -> None:
     st.dataframe(
         pd.DataFrame(
             [
-                ("Maximum vehicle weight", "kg", "Controls the vehicle weight constraint."),
-                ("Maximum pallet positions", "positions", "Controls vehicle floor/capacity usage."),
+                ("Vehicle capacities", "mÂ³, kg, pallets", "Applied separately by vehicle type."),
+                ("Vehicle-count weight", "objective", "Controls fleet-size importance."),
+                ("Freight-cost weight", "objective", "Controls route-cost importance."),
                 ("Solver time limit", "seconds/route", "Balances solve quality and response time."),
                 ("Programming date", "date", "Selects the daily_programming input snapshot."),
             ],
@@ -104,13 +139,22 @@ def configuration_screen() -> None:
     )
 
     if submitted:
+        selected_vehicles = [
+            VehicleTypeParameter(**record)
+            for record in edited_vehicles.to_dict(orient="records")
+            if bool(record["enabled"])
+        ]
+        if not selected_vehicles:
+            st.error("Enable at least one vehicle type before running the optimizer.")
+            return
         with st.spinner("Reading daily programming and optimizing all routes..."):
             try:
                 result = solve(
                     SolveRequest(
                         programming_date=programming_date,
-                        max_weight_kg=max_weight,
-                        max_pallets=max_pallets,
+                        vehicle_types=selected_vehicles,
+                        vehicle_count_weight=vehicle_count_weight,
+                        freight_cost_weight=freight_cost_weight,
                         time_limit_seconds=int(time_limit),
                         persist=persist,
                     )
@@ -124,11 +168,12 @@ def configuration_screen() -> None:
                     f"Simulation completed: {result.vehicles} vehicles across "
                     f"{result.routes} routes. Status: {result.status}."
                 )
-                cols = st.columns(4)
+                cols = st.columns(5)
                 cols[0].metric("Vehicles", result.vehicles)
                 cols[1].metric("Routes", result.routes)
                 cols[2].metric("Weight", f"{result.total_weight_kg:,.0f} kg")
                 cols[3].metric("Pallet demand", f"{result.total_pallets:,.1f}")
+                cols[4].metric("Freight cost", f"{result.total_freight_cost:,.2f}")
 
 
 def results_screen() -> None:
@@ -152,13 +197,14 @@ def results_screen() -> None:
 
     st.markdown('<div class="section-title">Macro results</div>', unsafe_allow_html=True)
     occupancy = vehicles[["weight_utilization", "pallet_utilization"]].max(axis=1).mean() if not vehicles.empty else 0
-    metrics = st.columns(6)
+    metrics = st.columns(7)
     metrics[0].metric("Vehicles", int(selected["vehicle_count"]))
     metrics[1].metric("Routes", int(selected["route_count"]))
     metrics[2].metric("Load items", len(loads))
     metrics[3].metric("Boxes", f"{vehicles['load_boxes'].sum():,.0f}" if not vehicles.empty else "0")
     metrics[4].metric("Weight", f"{float(selected['total_weight_kg']):,.0f} kg")
     metrics[5].metric("Avg. occupancy", f"{occupancy:.1%}")
+    metrics[6].metric("Freight cost", f"{float(selected['total_freight_cost']):,.2f}")
     st.caption(
         f"Programming date: {selected['programming_date']} · Solver: {selected['solver_name']} · "
         f"Status: {selected['status']} · Created: {selected['created_at']}"
@@ -168,13 +214,18 @@ def results_screen() -> None:
     route_view = vehicles.rename(
         columns={
             "origin": "Origin", "destiny": "Destination", "vehicle_id": "Vehicle",
+            "vehicle_type": "Vehicle type",
             "load_pallets": "Pallet demand", "load_boxes": "Boxes",
-            "load_weight_kg": "Weight (kg)", "weight_utilization": "Weight occupancy",
+            "load_weight_kg": "Weight (kg)", "load_volume_m3": "Volume (mÂ³)",
+            "weight_utilization": "Weight occupancy",
             "pallet_utilization": "Pallet occupancy",
+            "volume_utilization": "Volume occupancy",
+            "route_distance_km": "Distance (km)", "freight_cost": "Freight cost",
         }
     )
     route_view["Weight occupancy"] = route_view["Weight occupancy"] * 100
     route_view["Pallet occupancy"] = route_view["Pallet occupancy"] * 100
+    route_view["Volume occupancy"] = route_view["Volume occupancy"] * 100
     st.dataframe(
         route_view,
         hide_index=True,

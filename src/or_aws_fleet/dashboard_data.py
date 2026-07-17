@@ -39,7 +39,8 @@ def daily_programming(programming_date: date) -> pd.DataFrame:
         """
         SELECT demand_id, origin, destiny, cod_material, date, time_to_ship_days,
                units, qty_by_box, qty_by_pallet, material_weight,
-               total_weight_kg, total_pallets, total_boxes
+               total_weight_kg, total_pallets, total_boxes, total_volume_m3,
+               google_driving_distance_km
         FROM logistics.daily_programming
         WHERE date = %s
         ORDER BY origin, destiny, cod_material, demand_id
@@ -48,12 +49,24 @@ def daily_programming(programming_date: date) -> pd.DataFrame:
     )
 
 
+def vehicle_master_data() -> pd.DataFrame:
+    return _query(
+        """
+        SELECT vehicle_type, vehicle_capacity_m3, vehicle_capacity_kg,
+               freight_cost_per_km, vehicle_capacity_pallets
+        FROM logistics.vehicle_master_data
+        ORDER BY vehicle_capacity_kg, vehicle_type
+        """
+    )
+
+
 def optimization_runs(limit: int = 50) -> pd.DataFrame:
     return _query(
         """
         SELECT run_id, programming_date, created_at, status, solver_name,
                vehicle_count, route_count, demand_line_count, total_weight_kg,
-               total_pallets, max_weight_kg, max_pallets
+               total_pallets, max_weight_kg, max_pallets, total_freight_cost,
+               vehicle_count_weight, freight_cost_weight
         FROM logistics.optimization_runs
         ORDER BY created_at DESC
         LIMIT %s
@@ -65,8 +78,9 @@ def optimization_runs(limit: int = 50) -> pd.DataFrame:
 def vehicle_summary(run_id: str) -> pd.DataFrame:
     return _query(
         """
-        SELECT origin, destiny, vehicle_id, load_pallets, load_boxes,
-               load_weight_kg, weight_utilization, pallet_utilization
+        SELECT origin, destiny, vehicle_id, vehicle_type, load_pallets, load_boxes,
+               load_weight_kg, load_volume_m3, weight_utilization,
+               pallet_utilization, volume_utilization, route_distance_km, freight_cost
         FROM logistics.optimization_vehicle_assignments
         WHERE run_id = %s
         ORDER BY origin, destiny, vehicle_id

@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS logistics.vehicle_master_data (
     vehicle_type TEXT PRIMARY KEY,
     vehicle_capacity_m3 NUMERIC(10, 2) NOT NULL,
     vehicle_capacity_kg INTEGER NOT NULL,
-    freight_cost_per_km NUMERIC(10, 2) NOT NULL
+    freight_cost_per_km NUMERIC(10, 2) NOT NULL,
+    vehicle_capacity_pallets INTEGER NOT NULL
 )
 """.strip()
 
@@ -70,6 +71,7 @@ VEHICLE_COLUMNS = [
     "vehicle_capacity_m3",
     "vehicle_capacity_kg",
     "freight_cost_per_km",
+    "vehicle_capacity_pallets",
 ]
 
 
@@ -197,6 +199,7 @@ def prepare_vehicle_rows(headers: list[str], rows: list[list[str]]) -> list[tupl
                 decimal_value(data.get("vehiclecapacitym3")),
                 int_value(data.get("vehiclecapacitykg")),
                 decimal_value(data.get("freightcostperkm")),
+                int_value(data.get("vehiclecapacitypallets")),
             )
         )
     return prepared
@@ -319,7 +322,7 @@ def main() -> None:
         print("master SKU upload is disabled; use daily_programming as the optimizer input")
 
     if not args.skip_vehicle:
-        vehicle_headers, vehicle_raw_rows = read_sheet_table(google_creds, VEHICLE_TAB, "A1:D100")
+        vehicle_headers, vehicle_raw_rows = read_sheet_table(google_creds, VEHICLE_TAB, "A1:E100")
         vehicle_rows = prepare_vehicle_rows(vehicle_headers, vehicle_raw_rows)
         print(f"prepared vehicle rows: {len(vehicle_rows)}")
 

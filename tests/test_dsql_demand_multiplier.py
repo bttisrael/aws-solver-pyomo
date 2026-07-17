@@ -19,3 +19,12 @@ def test_generated_demand_applies_units_multiplier() -> None:
     scaled, _ = handler.generate_rows(date(2026, 7, 18), materials, 100, 271828, 4)
     assert len(normal) == len(scaled)
     assert [row[6] * 4 for row in normal] == [row[6] for row in scaled]
+
+
+def test_programming_rows_include_google_route_distance() -> None:
+    handler = load_handler()
+    assert "google_driving_distance_km" in handler.CREATE_PROGRAMMING_SQL
+    assert "route.google_driving_distance_km" in handler.INSERT_PROGRAMMING_SQL
+    assert "JOIN logistics.route AS route" in handler.INSERT_PROGRAMMING_SQL
+    assert "total_volume_m3" in handler.CREATE_PROGRAMMING_SQL
+    assert "master.box_volume" in handler.INSERT_PROGRAMMING_SQL

@@ -109,14 +109,17 @@ pytest
 ## FastAPI + Pyomo fleet optimizer
 
 The optimizer reads one date from `logistics.daily_programming`, separates the
-lines by origin/destination route, and solves a two-dimensional bin-packing
-model for every route. The primary objective is to minimize active vehicles.
+lines by origin/destination route, and solves a multi-fleet bin-packing model
+for every route. The weighted objective minimizes active vehicles plus freight
+cost (`Google driving distance x vehicle freight cost/km`).
 
 Constraints:
 
 - Every programming line is assigned to exactly one vehicle.
-- Vehicle weight is limited to 25,000 kg by default.
-- Vehicle capacity is limited to 60 pallet positions by default.
+- Weight, pallet, and cubic-volume limits are enforced for each enabled vehicle type.
+- Vehicle types and capacities come from `logistics.vehicle_master_data`.
+- Route distance comes from the Google Routes API value in `logistics.route`.
+- Vehicle-count and freight-cost weights are editable for scenario analysis.
 - Vehicle activation is ordered to reduce model symmetry.
 - A deterministic first-fit-decreasing solution is used as the upper bound and
   as a fallback when a MILP solver is unavailable.
@@ -139,8 +142,8 @@ Solve and persist a plan:
 ```powershell
 $body = @{
   programming_date = "2026-07-16"
-  max_weight_kg = 25000
-  max_pallets = 60
+  vehicle_count_weight = 1.0
+  freight_cost_weight = 0.001
   time_limit_seconds = 60
   persist = $true
 } | ConvertTo-Json
@@ -208,9 +211,10 @@ The workflow never receives or stores an AWS access key.
 
 The dashboard provides four operator screens:
 
-1. **Solver Configuration** selects the programming date and edits vehicle
-   weight, pallet capacity, solver time limit, and persistence. **Run
-   optimization** executes the Pyomo model and displays immediate scenario KPIs.
+1. **Solver Configuration** selects the programming date and displays every
+   vehicle type in an editable table. Users can enable vehicle types, change
+   weight, pallet, volume, and cost/km parameters, tune the objective weights,
+   and execute the Pyomo scenario without changing code.
 2. **Optimization Results** selects any persisted run, shows macro vehicle,
    route, box, weight, and occupancy KPIs, presents the vehicle summary, and
    provides the detailed BASE/TOP operational load plan with CSV export.
@@ -385,7 +389,18 @@ Google Sheets tab and creates/loads the retained Aurora DSQL table:
 
 - `VEHICLE MASTER DATA` -> `logistics.vehicle_master_data`
 
-The optimizer uses `logistics.daily_programming` as its demand input.
+The optimizer uses `logistics.daily_programming` as its demand input and joins
+the retained fleet and route master tables:
+
+```text
+logistics.vehicle_master_data
+logistics.route
+logistics.daily_programming
+```
+
+`logistics.route.google_driving_distance_km` contains Google Routes API driving
+distance. `daily_programming` carries that distance and `total_volume_m3` into
+the solver input.
 
 Setup:
 

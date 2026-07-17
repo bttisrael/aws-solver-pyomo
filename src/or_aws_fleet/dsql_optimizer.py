@@ -10,7 +10,7 @@ from decimal import Decimal
 import boto3
 import pg8000.dbapi
 
-from or_aws_fleet.programming_model import ProgrammingLine, RouteSolution
+from or_aws_fleet.programming_model import ProgrammingLine, RouteSolution, VehicleType
 
 
 CREATE_RUNS_SQL = """
@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS logistics.optimization_runs (
     total_weight_kg NUMERIC(18, 3) NOT NULL,
     total_pallets NUMERIC(18, 6) NOT NULL,
     max_weight_kg NUMERIC(12, 3) NOT NULL,
-    max_pallets NUMERIC(10, 3) NOT NULL
+    max_pallets NUMERIC(10, 3) NOT NULL,
+    total_freight_cost NUMERIC(18, 2) NOT NULL,
+    vehicle_count_weight NUMERIC(12, 6) NOT NULL,
+    freight_cost_weight NUMERIC(12, 6) NOT NULL
 )
 """.strip()
 
@@ -34,13 +37,18 @@ CREATE_VEHICLES_SQL = """
 CREATE TABLE IF NOT EXISTS logistics.optimization_vehicle_assignments (
     run_id VARCHAR(36) NOT NULL,
     vehicle_id VARCHAR(100) NOT NULL,
+    vehicle_type TEXT NOT NULL,
     origin VARCHAR(40) NOT NULL,
     destiny VARCHAR(40) NOT NULL,
     load_weight_kg NUMERIC(16, 3) NOT NULL,
     load_pallets NUMERIC(16, 6) NOT NULL,
+    load_volume_m3 NUMERIC(16, 6) NOT NULL,
     load_boxes NUMERIC(16, 6) NOT NULL,
     weight_utilization NUMERIC(10, 6) NOT NULL,
     pallet_utilization NUMERIC(10, 6) NOT NULL,
+    volume_utilization NUMERIC(10, 6) NOT NULL,
+    route_distance_km NUMERIC(10, 2) NOT NULL,
+    freight_cost NUMERIC(16, 2) NOT NULL,
     PRIMARY KEY (run_id, vehicle_id)
 )
 """.strip()
@@ -118,7 +126,8 @@ def load_programming(conn, programming_date: date) -> list[ProgrammingLine]:
     cursor.execute(
         """
         SELECT demand_id, origin, destiny, cod_material,
-               total_weight_kg, total_pallets, total_boxes, units, qty_by_box
+               total_weight_kg, total_pallets, total_boxes, total_volume_m3,
+               google_driving_distance_km, units, qty_by_box
         FROM logistics.daily_programming
         WHERE date = %s
         ORDER BY origin, destiny, demand_id
@@ -134,10 +143,39 @@ def load_programming(conn, programming_date: date) -> list[ProgrammingLine]:
             total_weight_kg=float(weight),
             total_pallets=float(pallets),
             total_boxes=float(boxes),
+            total_volume_m3=float(volume),
+            google_driving_distance_km=float(distance),
             units=int(units),
             qty_by_box=int(qty_by_box),
         )
-        for demand_id, origin, destiny, cod_material, weight, pallets, boxes, units, qty_by_box in cursor.fetchall()
+        for demand_id, origin, destiny, cod_material, weight, pallets, boxes, volume,
+        distance, units, qty_by_box in cursor.fetchall()
+    ]
+    cursor.close()
+    conn.rollback()
+    return rows
+
+
+def load_vehicle_types(conn) -> list[VehicleType]:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT vehicle_type, vehicle_capacity_m3, vehicle_capacity_kg,
+               freight_cost_per_km, vehicle_capacity_pallets
+        FROM logistics.vehicle_master_data
+        ORDER BY vehicle_capacity_kg, vehicle_type
+        """
+    )
+    rows = [
+        VehicleType(
+            vehicle_type=str(vehicle_type),
+            vehicle_capacity_m3=float(capacity_m3),
+            vehicle_capacity_kg=float(capacity_kg),
+            freight_cost_per_km=float(cost_per_km),
+            vehicle_capacity_pallets=float(capacity_pallets),
+        )
+        for vehicle_type, capacity_m3, capacity_kg, cost_per_km, capacity_pallets
+        in cursor.fetchall()
     ]
     cursor.close()
     conn.rollback()
@@ -168,6 +206,8 @@ def persist_solution(
     solutions: list[RouteSolution],
     max_weight_kg: float,
     max_pallets: float,
+    vehicle_count_weight: float = 1.0,
+    freight_cost_weight: float = 0.001,
 ) -> str:
     ensure_result_tables(conn)
     run_id = str(uuid.uuid4())
@@ -182,8 +222,9 @@ def persist_solution(
         INSERT INTO logistics.optimization_runs (
             run_id, programming_date, created_at, status, solver_name,
             vehicle_count, route_count, demand_line_count, total_weight_kg,
-            total_pallets, max_weight_kg, max_pallets
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            total_pallets, max_weight_kg, max_pallets, total_freight_cost,
+            vehicle_count_weight, freight_cost_weight
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             run_id,
@@ -198,13 +239,17 @@ def persist_solution(
             Decimal(str(round(sum(line.total_pallets for line in lines), 6))),
             Decimal(str(max_weight_kg)),
             Decimal(str(max_pallets)),
+            Decimal(str(round(sum(vehicle.freight_cost for vehicle in vehicles), 2))),
+            Decimal(str(vehicle_count_weight)),
+            Decimal(str(freight_cost_weight)),
         ),
     )
     vehicle_rows = [
         (
-            run_id, vehicle.vehicle_id, vehicle.origin, vehicle.destiny,
-            vehicle.load_weight_kg, vehicle.load_pallets, vehicle.load_boxes,
-            vehicle.weight_utilization, vehicle.pallet_utilization,
+            run_id, vehicle.vehicle_id, vehicle.vehicle_type, vehicle.origin, vehicle.destiny,
+            vehicle.load_weight_kg, vehicle.load_pallets, vehicle.load_volume_m3,
+            vehicle.load_boxes, vehicle.weight_utilization, vehicle.pallet_utilization,
+            vehicle.volume_utilization, vehicle.route_distance_km, vehicle.freight_cost,
         )
         for vehicle in vehicles
     ]
@@ -212,12 +257,13 @@ def persist_solution(
         cursor,
         """
         INSERT INTO logistics.optimization_vehicle_assignments (
-            run_id, vehicle_id, origin, destiny, load_weight_kg, load_pallets,
-            load_boxes, weight_utilization, pallet_utilization
+            run_id, vehicle_id, vehicle_type, origin, destiny, load_weight_kg, load_pallets,
+            load_volume_m3, load_boxes, weight_utilization, pallet_utilization,
+            volume_utilization, route_distance_km, freight_cost
         ) VALUES
         """,
         vehicle_rows,
-        9,
+        14,
     )
     line_rows = [
         (run_id, demand_id, vehicle.vehicle_id)
