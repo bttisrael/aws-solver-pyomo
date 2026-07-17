@@ -1,0 +1,11 @@
+{
+  "app": "python app.py",
+  "context": {
+    "account": "922981236785",
+    "region": "us-east-2",
+    "dsql_region": "us-east-2",
+    "dsql_cluster_identifier": "tjt42epnmb2gto7zpkpsmuqvnq",
+    "dsql_database": "postgres",
+    "dsql_db_user": "admin"
+  }
+}

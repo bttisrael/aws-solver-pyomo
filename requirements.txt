@@ -1,0 +1,7 @@
+boto3>=1.43.40
+highspy==1.8.1
+numpy==2.2.1
+pandas==2.2.3
+pyomo==6.8.2
+psycopg[binary]>=3.3.4
+google-auth>=2.0.0

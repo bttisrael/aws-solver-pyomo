@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+data/
+cdk.out/
+.cdk.staging/
+.env
+
+*.log
+*.tmp
+
+# Lambda deployment package dependencies are generated locally before deploy.
+lambda/dsql_daily_demand/*
+!lambda/dsql_daily_demand/
+!lambda/dsql_daily_demand/handler.py
+!lambda/dsql_daily_demand/requirements.txt

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "or-aws-fleet"
+version = "0.1.0"
+description = "Daily AWS operational research fleet-sizing pipeline with Pyomo"
+requires-python = ">=3.11"
+dependencies = [
+  "boto3>=1.43.40",
+  "highspy==1.8.1",
+  "numpy==2.2.1",
+  "pandas==2.2.3",
+  "pyomo==6.8.2",
+  "psycopg[binary]>=3.3.4",
+  "google-auth>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
