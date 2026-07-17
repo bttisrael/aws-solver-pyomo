@@ -50,6 +50,12 @@ def seasonal_naive_forecast(
     frame["units"] = pd.to_numeric(frame["units"], errors="coerce").fillna(0).clip(lower=0)
     frame["weekday"] = frame["date"].dt.weekday
     keys = ["origin", "destiny", "cod_material"]
+    # Synthetic orders are sparse across the full SKU/route cartesian product.
+    # Plan only the series present in the newest operational snapshot; using every
+    # combination observed in 180 days would create a large, stale forecast matrix.
+    latest_observation_date = frame["date"].max()
+    active_keys = frame.loc[frame["date"] == latest_observation_date, keys].drop_duplicates()
+    frame = frame.merge(active_keys, on=keys, how="inner")
     latest_attributes = [
         column
         for column in ("qty_by_box", "qty_by_pallet", "material_weight")
