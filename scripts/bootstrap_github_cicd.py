@@ -42,6 +42,8 @@ def deploy_stack() -> str:
     parameters = [
         {"ParameterKey": "GitHubOrganization", "ParameterValue": "bttisrael"},
         {"ParameterKey": "GitHubRepository", "ParameterValue": "aws-solver-pyomo"},
+        {"ParameterKey": "GitHubOwnerId", "ParameterValue": "107545519"},
+        {"ParameterKey": "GitHubRepositoryId", "ParameterValue": "1304020008"},
         {"ParameterKey": "ExistingGitHubOidcProviderArn", "ParameterValue": provider_arn},
     ]
     common = {

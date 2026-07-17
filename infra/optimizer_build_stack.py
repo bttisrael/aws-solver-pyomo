@@ -58,6 +58,7 @@ class OptimizerBuildStack(Stack):
             ),
             environment_variables={
                 "REPOSITORY_URI": codebuild.BuildEnvironmentVariable(value=self.repository.repository_uri),
+                "REPOSITORY_NAME": codebuild.BuildEnvironmentVariable(value=self.repository.repository_name),
                 "IMAGE_TAG": codebuild.BuildEnvironmentVariable(value=self.image_tag),
             },
             build_spec=codebuild.BuildSpec.from_object(
@@ -69,16 +70,17 @@ class OptimizerBuildStack(Stack):
                                 "aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI",
                                 "python -m pip install --quiet -r requirements.txt -r requirements-dev.txt",
                                 "PYTHONPATH=src pytest -q",
+                                "IMAGE_EXISTS=$(aws ecr describe-images --repository-name $REPOSITORY_NAME --image-ids imageTag=$IMAGE_TAG --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)",
                             ]
                         },
                         "build": {
                             "commands": [
-                                "docker build --pull --tag $REPOSITORY_URI:$IMAGE_TAG .",
+                                "if [ -z \"$IMAGE_EXISTS\" ] || [ \"$IMAGE_EXISTS\" = \"None\" ]; then docker build --pull --tag $REPOSITORY_URI:$IMAGE_TAG .; else echo \"Reusing immutable image $REPOSITORY_URI:$IMAGE_TAG\"; fi",
                             ]
                         },
                         "post_build": {
                             "commands": [
-                                "docker push $REPOSITORY_URI:$IMAGE_TAG",
+                                "if [ -z \"$IMAGE_EXISTS\" ] || [ \"$IMAGE_EXISTS\" = \"None\" ]; then docker push $REPOSITORY_URI:$IMAGE_TAG; fi",
                                 "printf '{\"imageUri\":\"%s\"}' $REPOSITORY_URI:$IMAGE_TAG > image-detail.json",
                             ]
                         },
