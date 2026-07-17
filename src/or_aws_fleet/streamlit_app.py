@@ -10,6 +10,10 @@ from or_aws_fleet.api import SolveRequest, solve
 from or_aws_fleet.dashboard_data import (
     available_programming_dates,
     daily_programming,
+    forecast_load_plan,
+    forecast_optimization_summary,
+    forecast_vehicle_summary,
+    latest_forecast_run,
     operational_load_plan,
     optimization_runs,
     vehicle_summary,
@@ -246,11 +250,81 @@ def programming_screen() -> None:
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_forecast():
+    return latest_forecast_run()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_forecast_summary(run_id: str):
+    return forecast_optimization_summary(run_id)
+
+
+def forecast_optimized_screen() -> None:
+    st.title("Forecast Optimized")
+    st.caption("Rolling 21-day demand forecast with P50 expected and P90 capacity plans.")
+    run = get_latest_forecast()
+    if run.empty:
+        st.info("The first scheduled forecast has not completed yet.")
+        return
+    selected_run = run.iloc[0]
+    run_id = str(selected_run["run_id"])
+    summary = get_forecast_summary(run_id)
+    if summary.empty:
+        st.warning("This forecast run does not contain optimization results.")
+        return
+
+    p50 = summary.loc[summary["scenario"] == "P50"].copy()
+    p90 = summary.loc[summary["scenario"] == "P90"].copy()
+    metrics = st.columns(6)
+    metrics[0].metric("Horizon", f"{int(selected_run['horizon_days'])} days")
+    metrics[1].metric("P50 vehicles", f"{int(p50['vehicle_count'].sum()):,}")
+    metrics[2].metric("P90 vehicles", f"{int(p90['vehicle_count'].sum()):,}")
+    metrics[3].metric("P50 units", f"{int(p50['total_units'].sum()):,}")
+    metrics[4].metric("P50 weight", f"{float(p50['total_weight_kg'].sum()):,.0f} kg")
+    metrics[5].metric("Avg. occupancy", f"{float(p50['average_occupancy'].mean()):.1%}")
+    st.caption(
+        f"Run date: {selected_run['forecast_run_date']} | Model: {selected_run['model_version']} | "
+        f"Status: {selected_run['status']}"
+    )
+
+    st.markdown('<div class="section-title">21-day vehicle requirement</div>', unsafe_allow_html=True)
+    chart = summary.pivot(index="forecast_date", columns="scenario", values="vehicle_count")
+    st.line_chart(chart, color=["#1f77b4", "#ff4b4b"])
+    st.caption("P50 is the expected operating plan. P90 is the conservative capacity plan.")
+
+    st.markdown('<div class="section-title">Forecast accuracy and governance</div>', unsafe_allow_html=True)
+    accuracy = st.columns(5)
+    accuracy[0].metric("WAPE", "Pending" if pd.isna(selected_run["wape"]) else f"{float(selected_run['wape']):.1%}")
+    accuracy[1].metric("MASE", "Pending" if pd.isna(selected_run["mase"]) else f"{float(selected_run['mase']):.2f}")
+    accuracy[2].metric("Bias", "Pending" if pd.isna(selected_run["bias"]) else f"{float(selected_run['bias']):.1%}")
+    accuracy[3].metric(
+        "Interval coverage", "Pending" if pd.isna(selected_run["interval_coverage"])
+        else f"{float(selected_run['interval_coverage']):.1%}",
+    )
+    accuracy[4].metric("Retraining", "Recommended" if selected_run["retraining_recommended"] else "Not required")
+
+    st.markdown('<div class="section-title">Daily optimized plan</div>', unsafe_allow_html=True)
+    dates = sorted(summary["forecast_date"].unique())
+    left, right = st.columns(2)
+    selected_date = left.selectbox("Forecast date", dates, format_func=lambda value: value.isoformat())
+    scenario = right.radio("Planning scenario", ["P50", "P90"], horizontal=True)
+    vehicles = forecast_vehicle_summary(run_id, selected_date, scenario)
+    loads = forecast_load_plan(run_id, selected_date, scenario)
+    st.dataframe(vehicles, hide_index=True, use_container_width=True)
+    st.markdown('<div class="section-title">Detailed operational load</div>', unsafe_allow_html=True)
+    st.dataframe(loads, hide_index=True, use_container_width=True, height=500)
+    st.download_button(
+        "Download forecast load plan as CSV", loads.to_csv(index=False).encode("utf-8"),
+        file_name=f"forecast_load_plan_{selected_date}_{scenario}.csv", mime="text/csv",
+    )
+
+
 st.sidebar.title("🚚 Load Optimizer")
 st.sidebar.caption(f"Updated {datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}")
 screen = st.sidebar.radio(
     "Navigation",
-    ["Solver Configuration", "Optimization Results", "Daily Programming"],
+    ["Solver Configuration", "Optimization Results", "Forecast Optimized", "Daily Programming"],
 )
 
 try:
@@ -258,6 +332,8 @@ try:
         configuration_screen()
     elif screen == "Optimization Results":
         results_screen()
+    elif screen == "Forecast Optimized":
+        forecast_optimized_screen()
     else:
         programming_screen()
 except Exception as exc:

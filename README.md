@@ -1,32 +1,54 @@
 # OR Production AWS
 
-Production-style operational research pipeline for daily fleet sizing on AWS.
-
-Every day at 17:00, the pipeline generates synthetic delivery demand and solves a
-Pyomo optimization model that minimizes the number of vehicles needed to deliver
-that demand. Outputs are written locally during development and to S3 when the
-pipeline runs in AWS.
+Production-style demand forecasting and operational research pipeline for fleet
+sizing on AWS. It combines a rolling 21-day probabilistic forecast with Pyomo
+vehicle minimization and a public, time-limited Streamlit portfolio dashboard.
 
 ## Architecture
 
 ```text
 Amazon EventBridge Scheduler
-  +-- daily 17:00 America/Sao_Paulo
+  +-- daily 00:00 America/Sao_Paulo: synthetic demand and daily programming
+  +-- daily 00:15 America/Sao_Paulo: 21-day forecast and optimization
       |
       +-- Amazon ECS Fargate task
           |
-          +-- generate daily demand
-          +-- solve Pyomo fleet-sizing model
-          +-- write demand, assignments, and summary
-          +-- upload outputs to Amazon S3
+          +-- seasonal champion forecast (P10/P50/P90)
+          +-- solve P50 and P90 Pyomo fleet-sizing plans for D+1..D+21
+          +-- persist forecasts, vehicle assignments, and load plans in Aurora DSQL
 
 Amazon CloudWatch Logs
   +-- container logs and run summary
 
-Amazon S3
-  +-- demand/dt=YYYY-MM-DD/demand.csv
-  +-- solutions/dt=YYYY-MM-DD/vehicle_assignments.csv
-  +-- summaries/dt=YYYY-MM-DD/summary.json
+Amazon Aurora DSQL
+  +-- daily_programming and optimization results
+  +-- demand_forecast and forecast optimization results
+```
+
+## Forecasting and model governance
+
+The production forecast is refreshed every day but the model is not retrained
+every day. The inexpensive `seasonal-naive-v1` champion uses recent observations
+from the same weekday and produces P10, P50, and P90 demand for each
+origin/destination/SKU series. P50 drives the expected plan; P90 provides a
+conservative capacity plan.
+
+AutoML retraining is recommended only after three consecutive failed monitoring
+evaluations and at least seven days since the previous training job. The gates
+are WAPE above 20%, MASE above 1.0, absolute bias above 7%, or prediction interval
+coverage outside 70%-90%. `ENABLE_AUTOML_RETRAINING=false` is intentionally set
+in production until a SageMaker training budget and execution role are approved.
+Daily forecasts continue normally while a challenger is trained and only a
+challenger that improves WAPE by at least 5% should replace the champion.
+
+Forecast tables:
+
+```text
+logistics.forecast_runs
+logistics.demand_forecast
+logistics.forecast_optimization_runs
+logistics.forecast_vehicle_assignments
+logistics.forecast_load_plan
 ```
 
 ## Optimization Problem
@@ -182,7 +204,7 @@ The workflow never receives or stores an AWS access key.
 
 ### Streamlit operations dashboard
 
-The dashboard provides three operator screens:
+The dashboard provides four operator screens:
 
 1. **Solver Configuration** selects the programming date and edits vehicle
    weight, pallet capacity, solver time limit, and persistence. **Run
@@ -190,7 +212,9 @@ The dashboard provides three operator screens:
 2. **Optimization Results** selects any persisted run, shows macro vehicle,
    route, box, weight, and occupancy KPIs, presents the vehicle summary, and
    provides the detailed BASE/TOP operational load plan with CSV export.
-3. **Daily Programming** displays the selected input date with origin and
+3. **Forecast Optimized** shows the 21-day P50/P90 vehicle curve, forecast and
+   governance KPIs, and date/scenario-level operational loads with CSV export.
+4. **Daily Programming** displays the selected input date with origin and
    destination filters, totals, and CSV export.
 
 Local execution requires the DSQL variables in the current PowerShell session:

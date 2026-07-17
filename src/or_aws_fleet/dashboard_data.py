@@ -88,3 +88,49 @@ def operational_load_plan(run_id: str) -> pd.DataFrame:
         """,
         (run_id,),
     )
+
+
+def latest_forecast_run() -> pd.DataFrame:
+    return _query(
+        """SELECT run_id, forecast_run_date, created_at, model_version, horizon_days,
+                  status, wape, mase, bias, interval_coverage, retraining_recommended,
+                  retraining_reasons
+           FROM logistics.forecast_runs
+           WHERE status = 'COMPLETE'
+           ORDER BY created_at DESC
+           LIMIT 1"""
+    )
+
+
+def forecast_optimization_summary(run_id: str) -> pd.DataFrame:
+    return _query(
+        """SELECT forecast_date, scenario, status, solver_name, vehicle_count,
+                  route_count, demand_line_count, total_units, total_weight_kg,
+                  total_pallets, average_occupancy
+           FROM logistics.forecast_optimization_runs
+           WHERE run_id = %s
+           ORDER BY forecast_date, scenario""",
+        (run_id,),
+    )
+
+
+def forecast_vehicle_summary(run_id: str, forecast_date: date, scenario: str) -> pd.DataFrame:
+    return _query(
+        """SELECT origin, destiny, vehicle_id, load_pallets, load_boxes,
+                  load_weight_kg, weight_utilization, pallet_utilization
+           FROM logistics.forecast_vehicle_assignments
+           WHERE run_id = %s AND forecast_date = %s AND scenario = %s
+           ORDER BY origin, destiny, vehicle_id""",
+        (run_id, forecast_date, scenario),
+    )
+
+
+def forecast_load_plan(run_id: str, forecast_date: date, scenario: str) -> pd.DataFrame:
+    return _query(
+        """SELECT origin, destiny, vehicle_id, cod_material, units, boxes,
+                  pallets, weight_kg, demand_id
+           FROM logistics.forecast_load_plan
+           WHERE run_id = %s AND forecast_date = %s AND scenario = %s
+           ORDER BY origin, destiny, vehicle_id, weight_kg DESC""",
+        (run_id, forecast_date, scenario),
+    )
