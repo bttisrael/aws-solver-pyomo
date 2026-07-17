@@ -36,6 +36,9 @@ class OptimizerBuildStack(Stack):
                 "infra/*",
                 "scripts/*",
                 "lambda/dsql_daily_demand/*",
+                # The Lambda-specific test imports the handler excluded above.
+                # GitHub CI still runs it from the complete repository checkout.
+                "tests/test_dsql_demand_multiplier.py",
                 "data/*",
                 ".pytest_cache/*",
                 ".ruff_cache/*",
