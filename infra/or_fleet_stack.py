@@ -13,6 +13,7 @@ from aws_cdk import (
     aws_logs as logs,
     aws_lambda as lambda_,
     aws_s3 as s3,
+    aws_scheduler as scheduler,
 )
 from constructs import Construct
 
@@ -117,6 +118,28 @@ class OrFleetStack(Stack):
             iam.PolicyStatement(actions=["dsql:GetCluster", "dsql:DbConnectAdmin"], resources=["*"])
         )
 
+        forecast_task = ecs.FargateTaskDefinition(
+            self, "DailyForecastTaskDefinition", cpu=2048, memory_limit_mib=4096
+        )
+        forecast_task.add_container(
+            "forecast",
+            image=ecs.ContainerImage.from_ecr_repository(image_repository, image_tag),
+            command=["python", "-m", "or_aws_fleet.dsql_forecast"],
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="forecast", log_group=log_group),
+            environment={
+                "DSQL_REGION": dsql_region,
+                "DSQL_CLUSTER_IDENTIFIER": dsql_cluster_identifier,
+                "DSQL_DATABASE": "postgres",
+                "DSQL_DB_USER": "admin",
+                # A forecast is produced daily. AutoML training remains gated until
+                # monitoring records three consecutive failures and the cost switch is enabled.
+                "ENABLE_AUTOML_RETRAINING": "false",
+            },
+        )
+        forecast_task.task_role.add_to_policy(
+            iam.PolicyStatement(actions=["dsql:GetCluster", "dsql:DbConnectAdmin"], resources=["*"])
+        )
+
         security_group = ec2.SecurityGroup(
             self,
             "OptimizerTaskSecurityGroup",
@@ -215,6 +238,48 @@ class OrFleetStack(Stack):
         )
         stop_function.grant_invoke(scheduler_role)
 
+        forecast_scheduler_role = iam.Role(
+            self,
+            "DailyForecastSchedulerRole",
+            assumed_by=iam.ServicePrincipal("scheduler.amazonaws.com"),
+        )
+        forecast_scheduler_role.add_to_policy(
+            iam.PolicyStatement(actions=["ecs:RunTask"], resources=[forecast_task.task_definition_arn])
+        )
+        forecast_scheduler_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["iam:PassRole"],
+                resources=[forecast_task.task_role.role_arn, forecast_task.execution_role.role_arn],
+            )
+        )
+        scheduler.CfnSchedule(
+            self,
+            "DailyForecastSchedule",
+            name="or-fleet-daily-forecast-0015",
+            description="Refresh the 21-day forecast and optimized P50/P90 plans after daily demand generation.",
+            schedule_expression="cron(15 0 * * ? *)",
+            schedule_expression_timezone="America/Sao_Paulo",
+            flexible_time_window=scheduler.CfnSchedule.FlexibleTimeWindowProperty(mode="OFF"),
+            target=scheduler.CfnSchedule.TargetProperty(
+                arn=cluster.cluster_arn,
+                role_arn=forecast_scheduler_role.role_arn,
+                retry_policy=scheduler.CfnSchedule.RetryPolicyProperty(
+                    maximum_event_age_in_seconds=3600, maximum_retry_attempts=2
+                ),
+                ecs_parameters=scheduler.CfnSchedule.EcsParametersProperty(
+                    task_definition_arn=forecast_task.task_definition_arn,
+                    launch_type="FARGATE",
+                    network_configuration=scheduler.CfnSchedule.NetworkConfigurationProperty(
+                        awsvpc_configuration=scheduler.CfnSchedule.AwsVpcConfigurationProperty(
+                            assign_public_ip="ENABLED",
+                            subnets=[subnet.subnet_id for subnet in vpc.public_subnets],
+                            security_groups=[security_group.security_group_id],
+                        )
+                    ),
+                ),
+            ),
+        )
+
         CfnOutput(self, "ArtifactsBucketName", value=bucket.bucket_name)
         CfnOutput(self, "ClusterName", value=cluster.cluster_name)
         CfnOutput(self, "ServiceName", value=service.service_name)
@@ -223,3 +288,4 @@ class OrFleetStack(Stack):
         CfnOutput(self, "OptimizerPublicDashboardUrl", value=f"http://{load_balancer.load_balancer_dns_name}")
         CfnOutput(self, "PortfolioStopFunctionArn", value=stop_function.function_arn)
         CfnOutput(self, "PortfolioSchedulerRoleArn", value=scheduler_role.role_arn)
+        CfnOutput(self, "DailyForecastScheduleName", value="or-fleet-daily-forecast-0015")
