@@ -168,8 +168,12 @@ class OrFleetStack(Stack):
             security_group=load_balancer_security_group,
         )
         listener = load_balancer.add_listener("HttpListener", port=80, open=False)
+        # Use a new construct ID when migrating the original internal ALB to
+        # the public portfolio ALB. This forces CloudFormation to create a
+        # fresh target group instead of briefly attaching the old target group
+        # to two load balancers during replacement.
         target_group = listener.add_targets(
-            "OptimizerDashboardTargets",
+            "OptimizerDashboardTargetsV2",
             port=8501,
             protocol=elbv2.ApplicationProtocol.HTTP,
             targets=[service.load_balancer_target(container_name="dashboard", container_port=8501)],
