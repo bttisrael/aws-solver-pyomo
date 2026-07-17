@@ -25,7 +25,7 @@ class DsqlDailyDemandStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
             code=lambda_.Code.from_asset(str(project_root / "lambda" / "dsql_daily_demand")),
-            timeout=Duration.minutes(3),
+            timeout=Duration.minutes(5),
             memory_size=512,
             log_retention=logs.RetentionDays.ONE_MONTH,
             environment={
@@ -34,6 +34,8 @@ class DsqlDailyDemandStack(Stack):
                 "DSQL_DATABASE": dsql_database,
                 "DSQL_DB_USER": dsql_db_user,
                 "LOCAL_TIMEZONE": "America/Sao_Paulo",
+                "BASELINE_DEMAND_ROWS": "1000",
+                "DEMAND_SEED": "271828",
             },
         )
         demand_function.add_to_role_policy(
@@ -59,13 +61,17 @@ class DsqlDailyDemandStack(Stack):
             self,
             "DailyDsqlDemandSchedule",
             name="daily-dsql-demand-0000",
-            description="Insert daily marketplace demand into Aurora DSQL at 00:00 Sao Paulo time.",
+            description="Generate seasonal beverage demand in Aurora DSQL at 00:00 Sao Paulo time.",
             flexible_time_window=scheduler.CfnSchedule.FlexibleTimeWindowProperty(mode="OFF"),
             schedule_expression="cron(0 0 * * ? *)",
             schedule_expression_timezone="America/Sao_Paulo",
             target=scheduler.CfnSchedule.TargetProperty(
                 arn=demand_function.function_arn,
                 role_arn=scheduler_role.role_arn,
+                retry_policy=scheduler.CfnSchedule.RetryPolicyProperty(
+                    maximum_event_age_in_seconds=3600,
+                    maximum_retry_attempts=2,
+                ),
             ),
         )
 
