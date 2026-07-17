@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -104,7 +105,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--multiplier", type=int, default=4)
     parser.add_argument("--through-date", type=date.fromisoformat, default=date.today())
+    parser.add_argument("--workers", type=int, default=8)
     return parser.parse_args()
+
+
+def scale_chunk(
+    settings: DatabaseSettings,
+    dates: list[date],
+    multiplier: int,
+) -> tuple[int, int, int]:
+    conn = settings.connect()
+    try:
+        demand_total = 0
+        programming_total = 0
+        for demand_date in dates:
+            demand_rows, programming_rows = scale_date(conn, demand_date, multiplier)
+            demand_total += demand_rows
+            programming_total += programming_rows
+        return len(dates), demand_total, programming_total
+    finally:
+        conn.close()
 
 
 def main() -> None:
@@ -117,20 +137,24 @@ def main() -> None:
     try:
         ensure_ledger(conn)
         dates = available_dates(conn, args.through_date)
-        demand_total = 0
-        programming_total = 0
-        for index, demand_date in enumerate(dates, start=1):
-            demand_rows, programming_rows = scale_date(conn, demand_date, args.multiplier)
-            demand_total += demand_rows
-            programming_total += programming_rows
-            if index % 30 == 0 or index == len(dates):
-                print(f"processed {index}/{len(dates)} dates through {demand_date}")
-        print(
-            f"migration={MIGRATION_NAME} dates={len(dates)} "
-            f"daily_demand_rows={demand_total} daily_programming_rows={programming_total}"
-        )
     finally:
         conn.close()
+    worker_count = max(1, min(args.workers, len(dates) or 1))
+    chunks = [dates[index::worker_count] for index in range(worker_count)]
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        results = list(
+            executor.map(
+                lambda chunk: scale_chunk(settings, chunk, args.multiplier),
+                chunks,
+            )
+        )
+    processed = sum(result[0] for result in results)
+    demand_total = sum(result[1] for result in results)
+    programming_total = sum(result[2] for result in results)
+    print(
+        f"migration={MIGRATION_NAME} dates={processed} workers={worker_count} "
+        f"daily_demand_rows={demand_total} daily_programming_rows={programming_total}"
+    )
 
 
 if __name__ == "__main__":
