@@ -7,6 +7,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Callable
 
 import pandas as pd
 
@@ -14,7 +15,7 @@ from or_aws_fleet.dsql_optimizer import DatabaseSettings, execute_multirow_inser
 from or_aws_fleet.forecasting import (
     FORECAST_HORIZON_DAYS,
     ForecastMetrics,
-    calculate_metrics,
+    calculate_aggregate_metrics,
     retraining_decision,
     seasonal_naive_forecast,
 )
@@ -119,23 +120,38 @@ def evaluate_latest_forecast(conn, run_date: date) -> tuple[ForecastMetrics | No
         return None, 0
     previous_run_id, previous_failures = previous
     cursor.execute(
-        """SELECT f.origin, f.destiny, f.cod_material, f.p10_units, f.p50_units,
-                  f.p90_units, COALESCE(SUM(d.units), 0) AS actual_units
-           FROM logistics.demand_forecast f
-           LEFT JOIN logistics.daily_programming d
-             ON d.date = f.forecast_date AND d.origin = f.origin
-            AND d.destiny = f.destiny AND d.cod_material = f.cod_material
-           WHERE f.run_id = %s AND f.forecast_date = %s
-           GROUP BY f.origin, f.destiny, f.cod_material, f.p10_units, f.p50_units, f.p90_units""",
+        """SELECT COALESCE(SUM(p10_units), 0), COALESCE(SUM(p50_units), 0),
+                  COALESCE(SUM(p90_units), 0)
+           FROM logistics.demand_forecast
+           WHERE run_id = %s AND forecast_date = %s""",
         (previous_run_id, run_date),
     )
-    rows = cursor.fetchall()
+    forecast_totals = cursor.fetchone()
+    cursor.execute(
+        """SELECT COALESCE(SUM(units), 0)
+           FROM logistics.daily_programming WHERE date = %s""",
+        (run_date,),
+    )
+    actual_total = cursor.fetchone()[0]
+    cursor.execute(
+        """SELECT date, SUM(units) AS daily_units
+           FROM logistics.daily_programming
+           WHERE date >= %s AND date < %s
+           GROUP BY date ORDER BY date""",
+        (run_date - timedelta(days=29), run_date),
+    )
+    history_rows = cursor.fetchall()
     cursor.close()
     conn.rollback()
-    if not rows:
+    if not forecast_totals or not any(forecast_totals):
         return None, int(previous_failures)
-    frame = pd.DataFrame(rows, columns=["origin", "destiny", "cod_material", "p10", "p50", "p90", "actual"])
-    metrics = calculate_metrics(frame["actual"], frame["p50"], frame["p10"], frame["p90"])
+    metrics = calculate_aggregate_metrics(
+        actual_total=float(actual_total),
+        predicted_total=float(forecast_totals[1]),
+        lower_total=float(forecast_totals[0]),
+        upper_total=float(forecast_totals[2]),
+        historical_daily_totals=pd.Series([row[1] for row in history_rows]),
+    )
     failed = bool(retraining_decision(metrics, 3, 999).reasons)
     return metrics, int(previous_failures) + 1 if failed else 0
 
@@ -201,12 +217,15 @@ def run_daily_forecast(
     vehicle_types: list[VehicleType] | None = None,
     vehicle_count_weight: float = 1.0,
     freight_cost_weight: float = 0.001,
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> str:
     run_date = run_date or datetime.now(timezone.utc).date()
     conn = DatabaseSettings.from_env().connect()
     try:
         ensure_forecast_tables(conn)
         history = load_history(conn, run_date)
+        if progress_callback:
+            progress_callback(42, "Loaded forecast history")
         configured_vehicle_types = vehicle_types or load_vehicle_types(conn)
         if not configured_vehicle_types:
             configured_vehicle_types = [
@@ -228,6 +247,8 @@ def run_daily_forecast(
         forecast = seasonal_naive_forecast(history, run_date, FORECAST_HORIZON_DAYS)
         if forecast.empty:
             raise RuntimeError("The forecast pipeline produced no rows.")
+        if progress_callback:
+            progress_callback(50, "Generated the 21-day demand forecast")
         run_id = str(uuid.uuid4())
         cursor = conn.cursor()
         cursor.execute(
@@ -259,7 +280,10 @@ def run_daily_forecast(
         optimization_rows: list[tuple] = []
         vehicle_rows: list[tuple] = []
         load_rows: list[tuple] = []
-        for forecast_date, day_frame in forecast.groupby("forecast_date", sort=True):
+        forecast_days = list(forecast.groupby("forecast_date", sort=True))
+        completed_scenarios = 0
+        total_scenarios = len(forecast_days) * 2
+        for forecast_date, day_frame in forecast_days:
             for scenario in ("P50", "P90"):
                 lines = _lines_for_day(day_frame, scenario, maximum_weight, maximum_pallets)
                 solutions = _optimize(
@@ -288,6 +312,12 @@ def run_daily_forecast(
                         load_rows.append((run_id, forecast_date, scenario, forecast_vehicle_id, demand_id,
                             line.origin, line.destiny, line.cod_material, line.units, line.total_boxes,
                             line.total_pallets, line.total_weight_kg))
+                completed_scenarios += 1
+                if progress_callback:
+                    progress_callback(
+                        50 + int(40 * completed_scenarios / max(total_scenarios, 1)),
+                        f"Optimized forecast {completed_scenarios}/{total_scenarios}",
+                    )
 
         insert_committed_batches(conn, """INSERT INTO logistics.forecast_optimization_runs (
             run_id, forecast_date, scenario, status, solver_name, vehicle_count, route_count,
@@ -304,6 +334,8 @@ def run_daily_forecast(
         cursor.execute("UPDATE logistics.forecast_runs SET status = %s WHERE run_id = %s", ("COMPLETE", run_id))
         conn.commit()
         cursor.close()
+        if progress_callback:
+            progress_callback(98, "Saved forecast optimization results")
         return run_id
     except Exception:
         conn.rollback()

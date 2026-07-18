@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import altair as alt
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
@@ -11,6 +12,7 @@ from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve
 from or_aws_fleet.dashboard_data import (
     available_programming_dates,
     daily_programming,
+    forecast_demand_comparison,
     forecast_load_plan,
     forecast_optimization_summary,
     forecast_vehicle_summary,
@@ -393,7 +395,7 @@ def configuration_screen() -> None:
                 help="Maximum optimization time for each origin-destination route.",
             )
         persist = st.checkbox("Save this simulation to the results database", value=True)
-        submitted = st.form_submit_button("🚀 Run optimization", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Run optimization", type="primary", use_container_width=True)
 
     st.markdown('<div class="section-title">Parameter reference</div>', unsafe_allow_html=True)
     st.dataframe(
@@ -420,8 +422,14 @@ def configuration_screen() -> None:
         if not selected_vehicles:
             st.error("Enable at least one vehicle type before running the optimizer.")
             return
+        progress = st.progress(2, text="Preparing optimization inputs")
+
+        def update_progress(value: int, message: str) -> None:
+            progress.progress(value, text=message)
+
         with st.spinner("Optimizing the selected day and the next 21 forecast days..."):
             try:
+                update_progress(10, "Optimizing selected-day demand")
                 result = solve(
                     SolveRequest(
                         programming_date=programming_date,
@@ -432,6 +440,7 @@ def configuration_screen() -> None:
                         persist=persist,
                     )
                 )
+                update_progress(35, "Selected-day optimization complete")
                 forecast_run_id = run_daily_forecast(
                     run_date=programming_date,
                     time_limit_seconds=int(time_limit),
@@ -447,13 +456,17 @@ def configuration_screen() -> None:
                     ],
                     vehicle_count_weight=vehicle_count_weight,
                     freight_cost_weight=freight_cost_weight,
+                    progress_callback=update_progress,
                 )
             except Exception as exc:
+                progress.empty()
                 st.error(f"Optimization could not be completed: {exc}")
             else:
+                update_progress(100, "Optimization complete")
                 get_runs.clear()
                 get_latest_forecast.clear()
                 get_forecast_summary.clear()
+                get_forecast_comparison.clear()
                 st.session_state["selected_run_id"] = result.run_id
                 st.success(
                     f"Simulation completed: {result.vehicles} vehicles across "
@@ -836,6 +849,11 @@ def get_forecast_summary(run_id: str):
     return forecast_optimization_summary(run_id)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_forecast_comparison(run_id: str, run_date):
+    return forecast_demand_comparison(run_id, run_date)
+
+
 def forecast_optimized_screen() -> None:
     page_title("Forecast Optimization", "forecast")
     st.caption("Rolling 21-day demand forecast with P50 expected and P90 capacity plans.")
@@ -864,16 +882,62 @@ def forecast_optimized_screen() -> None:
         f"Status: {selected_run['status']}"
     )
 
-    st.markdown('<div class="section-title">21-day vehicle requirement</div>', unsafe_allow_html=True)
-    chart = summary.pivot(index="forecast_date", columns="scenario", values="vehicle_count")
-    st.line_chart(chart, color=["#1f77b4", "#ff4b4b"])
-    st.caption("P50 is the expected operating plan. P90 is the conservative capacity plan.")
+    st.markdown(
+        '<div class="section-title">21-day demand forecast comparison</div>',
+        unsafe_allow_html=True,
+    )
+    comparison = get_forecast_comparison(run_id, selected_run["forecast_run_date"])
+    if comparison.empty:
+        st.info("Forecast comparison data is not available for this run.")
+    else:
+        chart_data = comparison.rename(
+            columns={
+                "forecast_date": "Date",
+                "model_forecast": "Forecast model (P50)",
+                "moving_average": "8-week weekday moving average",
+            }
+        ).melt("Date", var_name="Series", value_name="Units")
+        chart = (
+            alt.Chart(chart_data)
+            .mark_line(strokeWidth=3)
+            .encode(
+                x=alt.X("Date:T", title=None, axis=alt.Axis(grid=False, format="%b %d")),
+                y=alt.Y("Units:Q", title="Units", axis=alt.Axis(grid=False)),
+                color=alt.Color(
+                    "Series:N",
+                    scale=alt.Scale(range=["#65d9ff", "#ffad42"]),
+                    legend=alt.Legend(orient="bottom", title=None),
+                ),
+                tooltip=[
+                    alt.Tooltip("Date:T", title="Date"),
+                    alt.Tooltip("Series:N", title="Series"),
+                    alt.Tooltip("Units:Q", title="Units", format=",.0f"),
+                ],
+            )
+            .properties(height=380)
+            .configure_view(strokeWidth=0)
+            .configure_axis(domain=False, tickColor="#1b3c52", labelColor="#8da7b8")
+        )
+        st.altair_chart(chart, use_container_width=True)
+        st.caption(
+            "The forecast-model P50 curve is compared with an eight-week same-weekday "
+            "moving-average baseline. The current champion is seasonal-naive-v1; an AutoML "
+            "challenger should replace it only after outperforming this baseline."
+        )
 
     st.markdown('<div class="section-title">Forecast accuracy and governance</div>', unsafe_allow_html=True)
     accuracy = st.columns(5)
-    accuracy[0].metric("WAPE", "Pending" if pd.isna(selected_run["wape"]) else f"{float(selected_run['wape']):.1%}")
+    accuracy[0].metric(
+        "WAPE",
+        "Pending" if pd.isna(selected_run["wape"]) else f"{float(selected_run['wape']):.1%}",
+        help="Absolute daily-total forecast error divided by actual daily demand.",
+    )
     accuracy[1].metric("MASE", "Pending" if pd.isna(selected_run["mase"]) else f"{float(selected_run['mase']):.2f}")
-    accuracy[2].metric("Bias", "Pending" if pd.isna(selected_run["bias"]) else f"{float(selected_run['bias']):.1%}")
+    accuracy[2].metric(
+        "Bias",
+        "Pending" if pd.isna(selected_run["bias"]) else f"{float(selected_run['bias']):.1%}",
+        help="Actual minus forecast, divided by actual demand. Negative means over-forecasting.",
+    )
     accuracy[3].metric(
         "Interval coverage", "Pending" if pd.isna(selected_run["interval_coverage"])
         else f"{float(selected_run['interval_coverage']):.1%}",
