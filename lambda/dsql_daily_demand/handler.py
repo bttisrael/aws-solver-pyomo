@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 import os
 import random
 import ssl
@@ -153,19 +155,34 @@ def stable_seed(run_date: date, seed: int) -> int:
     return seed + int(run_date.strftime("%Y%m%d"))
 
 
+def stable_number(*parts: object) -> int:
+    payload = "|".join(str(part) for part in parts).encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big")
+
+
 def demand_factor(run_date: date, seed: int) -> float:
     rng = random.Random(stable_seed(run_date, seed) + 91_337)
     annual_growth = 1.0 + max(0, run_date.year - 2025) * 0.045
-    daily_noise = max(0.72, min(1.30, rng.gauss(1.0, 0.095)))
+    daily_noise = max(0.58, min(1.52, rng.lognormvariate(-0.018, 0.19)))
+    ordinal = run_date.toordinal()
+    market_cycle = 1.0 + 0.08 * math.sin(2 * math.pi * ordinal / 37)
+    market_cycle += 0.045 * math.sin(2 * math.pi * ordinal / 11)
     calendar_effect = 1.0
     if (run_date.month == 12 and run_date.day >= 10) or (run_date.month == 1 and run_date.day <= 7):
         calendar_effect *= 1.16
     event_roll = rng.random()
-    if event_roll < 0.025:
-        calendar_effect *= rng.uniform(1.22, 1.48)
-    elif event_roll > 0.985:
-        calendar_effect *= rng.uniform(0.62, 0.82)
-    return MONTH_FACTORS[run_date.month] * WEEKDAY_FACTORS[run_date.weekday()] * annual_growth * daily_noise * calendar_effect
+    if event_roll < 0.045:
+        calendar_effect *= rng.uniform(1.25, 1.75)
+    elif event_roll > 0.965:
+        calendar_effect *= rng.uniform(0.48, 0.78)
+    return (
+        MONTH_FACTORS[run_date.month]
+        * WEEKDAY_FACTORS[run_date.weekday()]
+        * annual_growth
+        * daily_noise
+        * calendar_effect
+        * market_cycle
+    )
 
 
 def load_materials(conn) -> list[tuple[str, int]]:
@@ -182,8 +199,60 @@ def load_materials(conn) -> list[tuple[str, int]]:
     return rows
 
 
-def choose_case_count(rng: random.Random, seasonal_factor: float) -> int:
-    return max(1, round(rng.triangular(1, 30, 8) * (0.72 + 0.28 * seasonal_factor)))
+def build_series_pool(
+    materials: list[tuple[str, int]], baseline_rows: int, seed: int
+) -> list[tuple[str, str, str, int, int]]:
+    """Create persistent intermittent route-SKU series with stable base velocity."""
+    rng = random.Random(seed + 404_911)
+    routes = [(origin, destiny) for origin in FACTORIES for destiny in DISTRIBUTION_CENTERS]
+    popular = rng.sample(materials, min(260, len(materials)))
+    available_combinations = len(routes) * len(materials)
+    pool_size = min(available_combinations, max(len(routes), round(baseline_rows * 2.1)))
+    pool: list[tuple[str, str, str, int, int]] = []
+    used: set[tuple[str, str, str]] = set()
+    while len(pool) < pool_size:
+        if len(pool) < len(routes):
+            origin, destiny = routes[len(pool)]
+        else:
+            origin = rng.choices(FACTORIES, weights=(24, 22, 21, 18, 15), k=1)[0]
+            destiny = rng.choices(
+                DISTRIBUTION_CENTERS, weights=(8, 11, 12, 17, 15, 10, 8, 10, 9), k=1
+            )[0]
+        material_pool = popular if rng.random() < 0.76 else materials
+        cod_material, qty_by_box = rng.choice(material_pool)
+        key = (origin, destiny, cod_material)
+        if key in used:
+            continue
+        used.add(key)
+        base_cases = max(1, min(42, round(rng.lognormvariate(2.05, 0.62))))
+        pool.append((origin, destiny, cod_material, qty_by_box, base_cases))
+    return pool
+
+
+def series_case_count(
+    run_date: date,
+    origin: str,
+    destiny: str,
+    cod_material: str,
+    base_cases: int,
+    seasonal_factor: float,
+    seed: int,
+) -> int:
+    series_seed = stable_number(seed, run_date.isoformat(), origin, destiny, cod_material)
+    rng = random.Random(series_seed)
+    ordinal = run_date.toordinal()
+    route_phase = stable_number(seed, origin, destiny) % 360
+    sku_phase = stable_number(seed, cod_material) % 360
+    local_cycle = 1.0 + 0.16 * math.sin(2 * math.pi * ordinal / 29 + route_phase)
+    sku_cycle = 1.0 + 0.12 * math.sin(2 * math.pi * ordinal / 17 + sku_phase)
+    promotion_rng = random.Random(stable_number(seed, run_date.isocalendar()[:2], cod_material))
+    promotion = promotion_rng.uniform(1.35, 2.25) if promotion_rng.random() < 0.11 else 1.0
+    stockout_roll = rng.random()
+    stockout = rng.uniform(0.08, 0.42) if stockout_roll < 0.035 else 1.0
+    order_noise = rng.lognormvariate(-0.04, 0.31)
+    cases = base_cases * (0.72 + 0.28 * seasonal_factor)
+    cases *= local_cycle * sku_cycle * promotion * stockout * order_noise
+    return max(1, min(120, round(cases)))
 
 
 def generate_rows(
@@ -195,20 +264,20 @@ def generate_rows(
 ):
     factor = demand_factor(run_date, seed)
     row_count = max(len(FACTORIES) * len(DISTRIBUTION_CENTERS), round(baseline_rows * factor))
-    rng = random.Random(stable_seed(run_date, seed))
-    routes = [(origin, destiny) for origin in FACTORIES for destiny in DISTRIBUTION_CENTERS]
-    rng.shuffle(routes)
-    popular = rng.sample(materials, min(240, len(materials)))
+    series_pool = build_series_pool(materials, baseline_rows, seed)
+    ranked_series = sorted(
+        series_pool,
+        key=lambda item: random.Random(
+            stable_number(seed, run_date.isoformat(), item[0], item[1], item[2], "active")
+        ).random(),
+    )
     rows = []
-    for sequence in range(1, row_count + 1):
-        if sequence <= len(routes):
-            origin, destiny = routes[sequence - 1]
-        else:
-            origin = rng.choices(FACTORIES, weights=(24, 22, 21, 18, 15), k=1)[0]
-            destiny = rng.choices(DISTRIBUTION_CENTERS, weights=(8, 11, 12, 17, 15, 10, 8, 10, 9), k=1)[0]
-        material_pool = popular if rng.random() < 0.72 else materials
-        cod_material, qty_by_box = rng.choice(material_pool)
-        units = qty_by_box * choose_case_count(rng, factor) * units_multiplier
+    for sequence, series in enumerate(ranked_series[: min(row_count, len(ranked_series))], 1):
+        origin, destiny, cod_material, qty_by_box, base_cases = series
+        cases = series_case_count(
+            run_date, origin, destiny, cod_material, base_cases, factor, seed
+        )
+        units = qty_by_box * cases * units_multiplier
         rows.append(
             (
                 f"DEM-{run_date:%Y%m%d}-{sequence:06d}",
