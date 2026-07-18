@@ -43,25 +43,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: github-production-${{ github.run_id }}
-      - name: Record current dashboard state
-        id: dashboard-state
-        shell: bash
-        run: |
-          STACK=OrFleetOptimizationStack
-          CLUSTER=$(aws cloudformation describe-stacks --stack-name "$STACK" \
-            --query "Stacks[0].Outputs[?OutputKey=='ClusterName'].OutputValue" \
-            --output text 2>/dev/null || true)
-          SERVICE=$(aws cloudformation describe-stacks --stack-name "$STACK" \
-            --query "Stacks[0].Outputs[?OutputKey=='ServiceName'].OutputValue" \
-            --output text 2>/dev/null || true)
-          DESIRED=0
-          if [ -n "$CLUSTER" ] && [ -n "$SERVICE" ]; then
-            DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
-              --query 'services[0].desiredCount' --output text 2>/dev/null || echo 0)
-          fi
-          [[ "$DESIRED" =~ ^[0-9]+$ ]] || DESIRED=0
-          echo "desired-count=${DESIRED}" >> "$GITHUB_OUTPUT"
-          echo "Dashboard desired count before deployment: ${DESIRED}"
       - name: Install deployment dependencies
         run: |
           python -m pip install -r requirements.txt -r requirements-dev.txt -r infra/requirements.txt
@@ -98,18 +79,6 @@ jobs:
           --require-approval never
           --context account=${AWS_ACCOUNT_ID}
           --context region=${AWS_REGION}
-      - name: Restore active portfolio demo
-        if: steps.dashboard-state.outputs.desired-count != '0'
-        shell: bash
-        run: |
-          STACK=OrFleetOptimizationStack
-          CLUSTER=$(aws cloudformation describe-stacks --stack-name "$STACK" \
-            --query "Stacks[0].Outputs[?OutputKey=='ClusterName'].OutputValue" --output text)
-          SERVICE=$(aws cloudformation describe-stacks --stack-name "$STACK" \
-            --query "Stacks[0].Outputs[?OutputKey=='ServiceName'].OutputValue" --output text)
-          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
-            --desired-count "${{ steps.dashboard-state.outputs.desired-count }}" >/dev/null
-          echo "Restored dashboard desired count to ${{ steps.dashboard-state.outputs.desired-count }}."
       - name: Wait for ECS and load-balancer health
         shell: bash
         run: |
@@ -120,12 +89,6 @@ jobs:
           TARGET_GROUP=$(aws cloudformation describe-stacks --stack-name OrFleetOptimizationStack \
             --query "Stacks[0].Outputs[?OutputKey=='TargetGroupArn'].OutputValue" --output text)
           aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
-          DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
-            --query 'services[0].desiredCount' --output text)
-          if [ "$DESIRED" = "0" ]; then
-            echo "Portfolio dashboard deployed in standby mode."
-            exit 0
-          fi
           HEALTH=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP" \
             --query 'TargetHealthDescriptions[].TargetHealth.State' --output text)
           echo "Target health: ${HEALTH}"

@@ -2,7 +2,7 @@
 
 Production-style demand forecasting and operational research pipeline for fleet
 sizing on AWS. It combines a rolling 21-day probabilistic forecast with Pyomo
-vehicle minimization and a public, time-limited Streamlit portfolio dashboard.
+vehicle minimization and a public, continuously available Streamlit portfolio dashboard.
 
 ## Architecture
 
@@ -187,33 +187,30 @@ Internet-facing Application Load Balancer
 DockerImageAsset -> CDK bootstrap ECR repository -> Fargate task definition
 ```
 
-The portfolio dashboard is public only during owner-started demo sessions. The
-ECS service normally stays at zero tasks. Run the **Start portfolio demo** GitHub
-Actions workflow to authenticate through GitHub OIDC, start one task, and create
-an EventBridge one-time schedule that stops it automatically after two hours.
-Only Streamlit is registered with the public load balancer; FastAPI and Aurora
-DSQL are not directly exposed. Use only synthetic/non-confidential portfolio data.
-The container pins Streamlit to a tested version, and ALB cookie stickiness keeps
-each browser's HTML, lazy JavaScript modules, and WebSocket on the same ECS task
-during rolling deployments.
+The public portfolio dashboard runs continuously with one ECS/Fargate task. CDK
+enforces both desired count and minimum capacity at one, so ECS automatically
+replaces an unhealthy task and production deployments wait for load-balancer
+health before succeeding. Only Streamlit is registered with the public load
+balancer; FastAPI and Aurora DSQL are not directly exposed. Use only
+synthetic/non-confidential portfolio data. The container pins Streamlit to a
+tested version, and ALB cookie stickiness keeps each browser's HTML, lazy
+JavaScript modules, and WebSocket on the same ECS task during rolling deployments.
 
-Portfolio controls:
+Availability configuration:
 
 ```text
-Start button: https://github.com/bttisrael/aws-solver-pyomo/actions/workflows/start-portfolio-demo.yml
-Default session: 2 hours
-Standby ECS desired count: 0
+Public app: http://OrFlee-Optim-5Z8Y1eU8XJzT-747546465.us-east-2.elb.amazonaws.com/
+ECS desired count: 1
+ECS minimum capacity: 1
 Maximum running tasks: 1
 ```
 
-To expose this as a portfolio button, link the button to the workflow-dispatch
-URL above. GitHub authenticates the owner, then the workflow assumes the AWS
-deployment role through OIDC, starts the ECS task, and schedules the stop.
-The workflow never receives or stores an AWS access key.
+The portfolio **Live app** button can link directly to the public app URL; no
+GitHub or AWS authentication step is required for visitors.
 
 ```html
-<a href="https://github.com/bttisrael/aws-solver-pyomo/actions/workflows/start-portfolio-demo.yml">
-  <button>Live app (2-hour demo)</button>
+<a href="http://OrFlee-Optim-5Z8Y1eU8XJzT-747546465.us-east-2.elb.amazonaws.com/">
+  <button>Live app</button>
 </a>
 ```
 
