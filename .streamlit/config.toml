@@ -23,3 +23,6 @@ backgroundColor = "#081724"
 secondaryBackgroundColor = "#0d1d2b"
 textColor = "#e9f6ff"
 primaryColor = "#65d9ff"
+
+[server]
+enableStaticServing = true
