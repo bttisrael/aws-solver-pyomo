@@ -23,6 +23,7 @@ from or_aws_fleet.dashboard_data import (
 )
 from or_aws_fleet.dsql_forecast import run_daily_forecast
 from or_aws_fleet.programming_model import VehicleType
+from or_aws_fleet.route_visualization import prepare_route_map_data
 
 
 st.set_page_config(page_title="Beverage Load Optimizer", page_icon="🚚", layout="wide")
@@ -60,12 +61,27 @@ st.markdown(
         box-shadow: 12px 0 32px rgba(0, 0, 0, .26);
     }
     [data-testid="stSidebar"] * {color: var(--text);}
+    [data-testid="stSidebar"] h1 {
+        font-size: 1.55rem !important;
+        line-height: 1.2;
+        overflow-wrap: normal;
+        text-transform: none;
+        white-space: nowrap;
+    }
     [data-testid="stSidebar"] [role="radiogroup"] label {
         border: 1px solid transparent;
         border-radius: 7px;
         padding: .48rem .65rem;
         margin: .12rem 0;
         transition: all .15s ease;
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"] > div:first-child {
+        display: none;
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
+        background: rgba(62, 194, 238, .12);
+        border-color: rgba(101, 217, 255, .48);
+        box-shadow: inset 3px 0 0 var(--cyan);
     }
     [data-testid="stSidebar"] [role="radiogroup"] label:hover {
         background: rgba(62, 194, 238, .08);
@@ -520,13 +536,10 @@ def route_network_screen() -> None:
         st.warning("No routes match the selected filters.")
         return
 
-    filtered = filtered.copy()
-    filtered["display_distance_km"] = filtered["google_driving_distance_km"].fillna(
-        filtered["distance_km"]
-    )
-    filtered["occupancy_percent"] = filtered["average_occupancy"] * 100
-    filtered["line_width"] = filtered["vehicle_count"].clip(lower=1, upper=12)
-    filtered["route"] = filtered["origin"] + " → " + filtered["destiny"]
+    filtered = prepare_route_map_data(filtered)
+    if filtered.empty:
+        st.warning("The selected routes do not have valid map coordinates.")
+        return
     route_palette = {
         origin: color
         for origin, color in zip(
@@ -566,6 +579,8 @@ def route_network_screen() -> None:
     destination_nodes["location_type"] = "Distribution center"
     destination_nodes["color"] = [[104, 224, 255, 230]] * len(destination_nodes)
     nodes = pd.concat([origin_nodes, destination_nodes], ignore_index=True)
+    arc_records = filtered.to_dict(orient="records")
+    node_records = nodes.to_dict(orient="records")
 
     midpoint_latitude = float(nodes["latitude"].mean())
     midpoint_longitude = float(nodes["longitude"].mean())
@@ -581,12 +596,13 @@ def route_network_screen() -> None:
         layers=[
             pdk.Layer(
                 "ArcLayer",
-                data=filtered,
-                get_source_position=["origin_longitude", "origin_latitude"],
-                get_target_position=["destiny_longitude", "destiny_latitude"],
+                id="route-glow",
+                data=arc_records,
+                get_source_position="[origin_longitude, origin_latitude]",
+                get_target_position="[destiny_longitude, destiny_latitude]",
                 get_source_color="route_color",
                 get_target_color="route_color",
-                get_width="line_width * 2.4",
+                get_width="glow_width",
                 width_min_pixels=3,
                 width_max_pixels=14,
                 opacity=0.16,
@@ -594,9 +610,10 @@ def route_network_screen() -> None:
             ),
             pdk.Layer(
                 "ArcLayer",
-                data=filtered,
-                get_source_position=["origin_longitude", "origin_latitude"],
-                get_target_position=["destiny_longitude", "destiny_latitude"],
+                id="route-core",
+                data=arc_records,
+                get_source_position="[origin_longitude, origin_latitude]",
+                get_target_position="[destiny_longitude, destiny_latitude]",
                 get_source_color="route_color",
                 get_target_color="route_color",
                 get_width="line_width",
@@ -608,8 +625,9 @@ def route_network_screen() -> None:
             ),
             pdk.Layer(
                 "ScatterplotLayer",
-                data=nodes,
-                get_position=["longitude", "latitude"],
+                id="network-nodes",
+                data=node_records,
+                get_position="[longitude, latitude]",
                 get_fill_color="color",
                 get_line_color=[205, 245, 255, 220],
                 stroked=True,
@@ -802,15 +820,16 @@ st.sidebar.markdown(
     '<div class="system-status">Optimization platform online</div>',
     unsafe_allow_html=True,
 )
+navigation = {
+    "🏭  Solver Configuration": configuration_screen,
+    "🚚  Actual Optimization": results_screen,
+    "📈  Forecast Optimization": forecast_optimized_screen,
+    "🗺️  Route Network": route_network_screen,
+    "📦  Daily Programming": programming_screen,
+}
 screen = st.sidebar.radio(
     "Navigation",
-    [
-        "Solver Configuration",
-        "Actual Optimization",
-        "Forecast Optimization",
-        "Route Network",
-        "Daily Programming",
-    ],
+    list(navigation),
 )
 st.sidebar.caption(
     f"Last interface refresh · "
@@ -818,16 +837,7 @@ st.sidebar.caption(
 )
 
 try:
-    if screen == "Solver Configuration":
-        configuration_screen()
-    elif screen == "Actual Optimization":
-        results_screen()
-    elif screen == "Forecast Optimization":
-        forecast_optimized_screen()
-    elif screen == "Route Network":
-        route_network_screen()
-    else:
-        programming_screen()
+    navigation[screen]()
 except Exception as exc:
     st.error("The dashboard could not access its AWS data source.")
     st.exception(exc)
