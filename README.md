@@ -212,18 +212,22 @@ The workflow never receives or stores an AWS access key.
 
 ### Streamlit operations dashboard
 
-The dashboard provides four operator screens:
+The dashboard provides five operator screens:
 
 1. **Solver Configuration** selects the programming date and displays every
    vehicle type in an editable table. Users can enable vehicle types, change
    weight, pallet, volume, and cost/km parameters, tune the objective weights,
    and execute the Pyomo scenario without changing code.
-2. **Actual Optimization** selects any persisted run, shows macro vehicle,
+2. **Actual Optimization** selects one of the five latest persisted runs, shows macro vehicle,
    route, box, weight, and occupancy KPIs, presents the vehicle summary, and
    provides the detailed BASE/TOP operational load plan with CSV export.
 3. **Forecast Optimization** shows the 21-day P50/P90 vehicle curve, forecast and
    governance KPIs, and date/scenario-level operational loads with CSV export.
-4. **Daily Programming** displays the selected input date with origin and
+4. **Route Network** maps every factory-to-distribution-center connection using
+   the route master coordinates and Google driving distances. Filters, map
+   tooltips, route KPIs, and a detailed table combine network data with vehicle,
+   load, occupancy, and freight metrics from the latest actual optimization.
+5. **Daily Programming** displays the selected input date with origin and
    destination filters, totals, and CSV export.
 
 Local execution requires the DSQL variables in the current PowerShell session:

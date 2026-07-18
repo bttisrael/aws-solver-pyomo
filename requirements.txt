@@ -4,6 +4,7 @@ highspy==1.8.1
 numpy==2.2.1
 pandas==2.2.3
 pyomo==6.8.2
+pydeck==0.9.3
 psycopg[binary]>=3.3.4
 pg8000>=1.31.5
 pydantic>=2.11.9,<2.12
