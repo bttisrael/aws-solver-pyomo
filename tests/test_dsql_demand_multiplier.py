@@ -21,6 +21,20 @@ def test_generated_demand_applies_units_multiplier() -> None:
     assert [row[6] * 4 for row in normal] == [row[6] for row in scaled]
 
 
+def test_generator_has_persistent_series_and_realistic_shocks() -> None:
+    handler = load_handler()
+    materials = [(f"MAT_{index:04d}", 12) for index in range(500)]
+    days = [date(2026, 1, day) for day in range(1, 15)]
+    generated = [handler.generate_rows(day, materials, 300, 271828, 4)[0] for day in days]
+    first_keys = {(row[1], row[2], row[3]) for row in generated[0]}
+    second_keys = {(row[1], row[2], row[3]) for row in generated[1]}
+    totals = [sum(row[6] for row in rows) for rows in generated]
+
+    assert len(first_keys & second_keys) >= 60
+    assert max(totals) / min(totals) > 1.35
+    assert len(set(totals)) == len(totals)
+
+
 def test_programming_rows_include_google_route_distance() -> None:
     handler = load_handler()
     assert "google_driving_distance_km" in handler.CREATE_PROGRAMMING_SQL

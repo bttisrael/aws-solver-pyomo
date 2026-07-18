@@ -35,6 +35,13 @@ active-series guard avoids forecasting the large sparse cartesian product of
 historical synthetic orders. P50 drives the expected plan; P90 provides a
 conservative capacity plan.
 
+Demand generation uses persistent intermittent route-SKU series rather than a
+new random product mix every day. Stable base velocities are combined with
+calendar seasonality, annual growth, correlated market cycles, route and SKU
+cycles, multi-day promotions, occasional stockouts, heavy-tailed order noise,
+and rare market-wide shocks. This creates learnable structure while retaining
+realistic residual uncertainty for AutoML challenger evaluation.
+
 AutoML retraining is recommended only after three consecutive failed monitoring
 evaluations and at least seven days since the previous training job. The gates
 are WAPE above 20%, MASE above 1.0, absolute bias above 7%, or prediction interval
