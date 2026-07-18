@@ -2,7 +2,10 @@ from decimal import Decimal
 
 import pandas as pd
 
-from or_aws_fleet.route_visualization import prepare_route_map_data
+from or_aws_fleet.route_visualization import (
+    calculate_cost_efficiency_summary,
+    prepare_route_map_data,
+)
 
 
 def test_prepare_route_map_data_converts_database_decimals_for_map_and_ranking():
@@ -49,3 +52,25 @@ def test_prepare_route_map_data_converts_database_decimals_for_map_and_ranking()
     assert prepared.nlargest(1, "display_distance_km").iloc[0]["route"] == "FAC_01 → DC_01"
     assert prepared.iloc[1]["display_distance_km"] == 450.5
     assert round(prepared.iloc[0]["glow_width"], 1) == 7.2
+
+
+def test_cost_efficiency_summary_projects_forecast_from_current_vehicle_cost():
+    routes = pd.DataFrame(
+        [
+            {"freight_cost": 600, "average_occupancy": 0.5, "vehicle_count": 2},
+            {"freight_cost": 400, "average_occupancy": 0.75, "vehicle_count": 2},
+        ]
+    )
+    forecast = pd.DataFrame(
+        [
+            {"scenario": "P50", "vehicle_count": 10, "average_occupancy": 0.8},
+            {"scenario": "P90", "vehicle_count": 12, "average_occupancy": 0.7},
+        ]
+    )
+
+    summary = calculate_cost_efficiency_summary(routes, forecast)
+
+    assert summary["current_cost"] == 1_000
+    assert summary["current_avoidable"] == 400
+    assert summary["forecast_cost"] == 2_500
+    assert round(summary["forecast_avoidable"], 2) == 500
