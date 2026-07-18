@@ -120,7 +120,7 @@ st.markdown(
         background-image: url("/app/static/icons/factory.png");
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(2) p::before {
-        background-image: url("/app/static/icons/truck.png");
+        background-image: url("/app/static/icons/actual.png");
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(3) p::before {
         background-image: url("/app/static/icons/forecast.png");
@@ -222,17 +222,6 @@ st.markdown(
         margin-right: 8px;
         width: 7px;
     }
-    .icon-credit {
-        color: #668395;
-        font-size: .66rem;
-        margin-top: 1.2rem;
-        opacity: .78;
-    }
-    .icon-credit a {
-        color: #7ca4b9 !important;
-        text-decoration: none;
-    }
-    .icon-credit a:hover {color: var(--cyan) !important;}
     [data-testid="stForm"] {
         background: rgba(8, 22, 33, .76);
         border: 1px solid var(--line);
@@ -907,12 +896,6 @@ st.sidebar.caption(
     f"Last interface refresh · "
     f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}"
 )
-st.sidebar.markdown(
-    '<div class="icon-credit">Navigation icons by '
-    '<a href="https://icons8.com" target="_blank">Icons8</a></div>',
-    unsafe_allow_html=True,
-)
-
 try:
     navigation[screen]()
 except Exception as exc:
