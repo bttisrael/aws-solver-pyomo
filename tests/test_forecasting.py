@@ -8,6 +8,8 @@ from or_aws_fleet.forecasting import (
     retraining_decision,
     seasonal_naive_forecast,
 )
+from or_aws_fleet.dsql_forecast import _optimize
+from or_aws_fleet.programming_model import ProgrammingLine, RouteSolution, VehicleType
 
 
 def history_frame() -> pd.DataFrame:
@@ -61,3 +63,37 @@ def test_forecast_excludes_series_not_active_in_latest_snapshot() -> None:
     inactive["cod_material"] = "INACTIVE_SKU"
     result = seasonal_naive_forecast(pd.concat([history, inactive], ignore_index=True), date(2026, 5, 20))
     assert "INACTIVE_SKU" not in result["cod_material"].tolist()
+
+
+def test_forecast_optimization_uses_selected_fleet_distance_and_weights(monkeypatch) -> None:
+    line = ProgrammingLine(
+        demand_id="forecast-1",
+        origin="FAC_01",
+        destiny="DC_01",
+        cod_material="MAT_001",
+        total_weight_kg=100,
+        total_pallets=1,
+        total_boxes=10,
+    )
+    vehicle = VehicleType("Cargo van", 8, 1_200, 4.2, 5)
+    captured = {}
+
+    def fake_solve_route(lines, **kwargs):
+        captured.update(kwargs)
+        return RouteSolution("OPTIMAL", "test", lines[0].origin, lines[0].destiny, ())
+
+    monkeypatch.setattr("or_aws_fleet.dsql_forecast.solve_route", fake_solve_route)
+    _optimize(
+        [line],
+        [vehicle],
+        {("FAC_01", "DC_01"): 123.4},
+        time_limit=45,
+        vehicle_count_weight=2.5,
+        freight_cost_weight=0.007,
+    )
+
+    assert captured["vehicle_types"] == [vehicle]
+    assert captured["distance_km"] == 123.4
+    assert captured["time_limit_seconds"] == 45
+    assert captured["vehicle_count_weight"] == 2.5
+    assert captured["freight_cost_weight"] == 0.007

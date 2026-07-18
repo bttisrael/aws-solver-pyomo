@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pandas as pd
 
-from or_aws_fleet.dsql_optimizer import DatabaseSettings, execute_multirow_insert
+from or_aws_fleet.dsql_optimizer import DatabaseSettings, execute_multirow_insert, load_vehicle_types
 from or_aws_fleet.forecasting import (
     FORECAST_HORIZON_DAYS,
     ForecastMetrics,
@@ -18,7 +18,7 @@ from or_aws_fleet.forecasting import (
     retraining_decision,
     seasonal_naive_forecast,
 )
-from or_aws_fleet.programming_model import ProgrammingLine, solve_route
+from or_aws_fleet.programming_model import ProgrammingLine, VehicleType, solve_route
 
 
 DDL = (
@@ -91,7 +91,7 @@ def load_history(conn, run_date: date, lookback_days: int = 180) -> pd.DataFrame
     cursor = conn.cursor()
     cursor.execute(
         """SELECT date, origin, destiny, cod_material, units, qty_by_box,
-                  qty_by_pallet, material_weight
+                  qty_by_pallet, material_weight, google_driving_distance_km
            FROM logistics.daily_programming
            WHERE date >= %s AND date <= %s
            ORDER BY date, origin, destiny, cod_material""",
@@ -169,11 +169,28 @@ def _lines_for_day(frame: pd.DataFrame, scenario: str, max_weight: float, max_pa
     return lines
 
 
-def _optimize(lines: list[ProgrammingLine], max_weight: float, max_pallets: float, time_limit: int):
+def _optimize(
+    lines: list[ProgrammingLine],
+    vehicle_types: list[VehicleType],
+    route_distances: dict[tuple[str, str], float],
+    time_limit: int,
+    vehicle_count_weight: float,
+    freight_cost_weight: float,
+):
     routes: dict[tuple[str, str], list[ProgrammingLine]] = defaultdict(list)
     for line in lines:
         routes[(line.origin, line.destiny)].append(line)
-    return [solve_route(route, max_weight, max_pallets, time_limit) for route in routes.values()]
+    return [
+        solve_route(
+            route,
+            time_limit_seconds=time_limit,
+            vehicle_types=vehicle_types,
+            distance_km=route_distances.get(route_key, 0),
+            vehicle_count_weight=vehicle_count_weight,
+            freight_cost_weight=freight_cost_weight,
+        )
+        for route_key, route in routes.items()
+    ]
 
 
 def run_daily_forecast(
@@ -181,12 +198,28 @@ def run_daily_forecast(
     max_weight_kg: float = 25_000,
     max_pallets: float = 60,
     time_limit_seconds: int = 30,
+    vehicle_types: list[VehicleType] | None = None,
+    vehicle_count_weight: float = 1.0,
+    freight_cost_weight: float = 0.001,
 ) -> str:
     run_date = run_date or datetime.now(timezone.utc).date()
     conn = DatabaseSettings.from_env().connect()
     try:
         ensure_forecast_tables(conn)
         history = load_history(conn, run_date)
+        configured_vehicle_types = vehicle_types or load_vehicle_types(conn)
+        if not configured_vehicle_types:
+            configured_vehicle_types = [
+                VehicleType("Configured vehicle", 1_000_000_000, max_weight_kg, 0, max_pallets)
+            ]
+        maximum_weight = max(vehicle.vehicle_capacity_kg for vehicle in configured_vehicle_types)
+        maximum_pallets = max(vehicle.vehicle_capacity_pallets for vehicle in configured_vehicle_types)
+        route_distances = {
+            (str(origin), str(destiny)): float(distance)
+            for (origin, destiny), distance in history.groupby(["origin", "destiny"])[
+                "google_driving_distance_km"
+            ].max().items()
+        }
         metrics, consecutive_failures = evaluate_latest_forecast(conn, run_date)
         decision = (
             retraining_decision(metrics, consecutive_failures, days_since_training=999)
@@ -228,8 +261,15 @@ def run_daily_forecast(
         load_rows: list[tuple] = []
         for forecast_date, day_frame in forecast.groupby("forecast_date", sort=True):
             for scenario in ("P50", "P90"):
-                lines = _lines_for_day(day_frame, scenario, max_weight_kg, max_pallets)
-                solutions = _optimize(lines, max_weight_kg, max_pallets, time_limit_seconds)
+                lines = _lines_for_day(day_frame, scenario, maximum_weight, maximum_pallets)
+                solutions = _optimize(
+                    lines,
+                    configured_vehicle_types,
+                    route_distances,
+                    time_limit_seconds,
+                    vehicle_count_weight,
+                    freight_cost_weight,
+                )
                 vehicles = [vehicle for solution in solutions for vehicle in solution.vehicles]
                 status = "OPTIMAL" if all(item.status == "OPTIMAL" for item in solutions) else "FEASIBLE"
                 occupancy = sum(max(v.weight_utilization, v.pallet_utilization) for v in vehicles) / max(len(vehicles), 1)
