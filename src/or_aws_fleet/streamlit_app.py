@@ -68,6 +68,26 @@ st.markdown(
         text-transform: none;
         white-space: nowrap;
     }
+    .sidebar-brand {
+        align-items: center;
+        display: flex;
+        gap: .75rem;
+        margin: .25rem 0 .8rem;
+    }
+    .sidebar-brand img {
+        filter: drop-shadow(0 0 10px rgba(101, 217, 255, .2));
+        height: 52px;
+        object-fit: contain;
+        width: 52px;
+    }
+    .sidebar-brand span {
+        color: var(--text);
+        font-size: 1.55rem;
+        font-weight: 750;
+        letter-spacing: .015em;
+        line-height: 1.15;
+        white-space: nowrap;
+    }
     [data-testid="stSidebar"] [role="radiogroup"] label {
         border: 1px solid transparent;
         border-radius: 7px;
@@ -77,6 +97,39 @@ st.markdown(
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"] > div:first-child {
         display: none;
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"] p {
+        align-items: center;
+        display: flex;
+        min-height: 34px;
+        padding-left: 2.8rem;
+        position: relative;
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"] p::before {
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: contain;
+        content: "";
+        filter: drop-shadow(0 0 6px rgba(101, 217, 255, .18));
+        height: 34px;
+        left: 0;
+        position: absolute;
+        width: 34px;
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(1) p::before {
+        background-image: url("/app/static/icons/factory.png");
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(2) p::before {
+        background-image: url("/app/static/icons/truck.png");
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(3) p::before {
+        background-image: url("/app/static/icons/forecast.png");
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(4) p::before {
+        background-image: url("/app/static/icons/route.png");
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(5) p::before {
+        background-image: url("/app/static/icons/package.png");
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
         background: rgba(62, 194, 238, .12);
@@ -169,6 +222,17 @@ st.markdown(
         margin-right: 8px;
         width: 7px;
     }
+    .icon-credit {
+        color: #668395;
+        font-size: .66rem;
+        margin-top: 1.2rem;
+        opacity: .78;
+    }
+    .icon-credit a {
+        color: #7ca4b9 !important;
+        text-decoration: none;
+    }
+    .icon-credit a:hover {color: var(--cyan) !important;}
     [data-testid="stForm"] {
         background: rgba(8, 22, 33, .76);
         border: 1px solid var(--line);
@@ -814,18 +878,26 @@ def forecast_optimized_screen() -> None:
     )
 
 
-st.sidebar.title("🚚 Load Optimizer")
+st.sidebar.markdown(
+    """
+    <div class="sidebar-brand">
+        <img src="/app/static/icons/truck.png" alt="Delivery truck">
+        <span>Load Optimizer</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.sidebar.caption("AWS · PYOMO · STREAMLIT")
 st.sidebar.markdown(
     '<div class="system-status">Optimization platform online</div>',
     unsafe_allow_html=True,
 )
 navigation = {
-    "🏭  Solver Configuration": configuration_screen,
-    "🚚  Actual Optimization": results_screen,
-    "📈  Forecast Optimization": forecast_optimized_screen,
-    "🗺️  Route Network": route_network_screen,
-    "📦  Daily Programming": programming_screen,
+    "Solver Configuration": configuration_screen,
+    "Actual Optimization": results_screen,
+    "Forecast Optimization": forecast_optimized_screen,
+    "Route Network": route_network_screen,
+    "Daily Programming": programming_screen,
 }
 screen = st.sidebar.radio(
     "Navigation",
@@ -834,6 +906,11 @@ screen = st.sidebar.radio(
 st.sidebar.caption(
     f"Last interface refresh · "
     f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}"
+)
+st.sidebar.markdown(
+    '<div class="icon-credit">Navigation icons by '
+    '<a href="https://icons8.com" target="_blank">Icons8</a></div>',
+    unsafe_allow_html=True,
 )
 
 try:
