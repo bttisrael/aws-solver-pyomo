@@ -203,6 +203,12 @@ class OrFleetStack(Stack):
             health_check=elbv2.HealthCheck(path="/_stcore/health", healthy_http_codes="200"),
             deregistration_delay=Duration.seconds(30),
         )
+        # Streamlit keeps browser state over a WebSocket and lazy-loads hashed
+        # frontend chunks. During a rolling deployment, keep one browser on one
+        # task so its HTML, JavaScript modules, and WebSocket use the same image.
+        target_group.set_attribute("stickiness.enabled", "true")
+        target_group.set_attribute("stickiness.type", "lb_cookie")
+        target_group.set_attribute("stickiness.lb_cookie.duration_seconds", "7200")
 
         stop_function = lambda_.Function(
             self,
