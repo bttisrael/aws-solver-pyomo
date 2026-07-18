@@ -186,6 +186,9 @@ Actions workflow to authenticate through GitHub OIDC, start one task, and create
 an EventBridge one-time schedule that stops it automatically after two hours.
 Only Streamlit is registered with the public load balancer; FastAPI and Aurora
 DSQL are not directly exposed. Use only synthetic/non-confidential portfolio data.
+The container pins Streamlit to a tested version, and ALB cookie stickiness keeps
+each browser's HTML, lazy JavaScript modules, and WebSocket on the same ECS task
+during rolling deployments.
 
 Portfolio controls:
 
