@@ -147,6 +147,22 @@ st.markdown(
         font-size: clamp(2rem, 3vw, 3.2rem) !important;
         text-shadow: 0 0 24px rgba(101, 217, 255, .12);
     }
+    .page-title {
+        align-items: center;
+        display: flex;
+        gap: 1rem;
+        margin: 0 0 1rem;
+    }
+    .page-title img {
+        filter: drop-shadow(0 0 12px rgba(101, 217, 255, .22));
+        height: clamp(54px, 5vw, 78px);
+        object-fit: contain;
+        width: clamp(54px, 5vw, 78px);
+    }
+    .page-title h1 {
+        margin: 0;
+        padding: 0;
+    }
     h2, h3 {color: var(--text);}
     p, label, [data-testid="stCaptionContainer"] {color: var(--muted) !important;}
     hr {border-color: var(--line);}
@@ -311,8 +327,20 @@ def date_selector(key: str):
     return st.selectbox("Programming date", dates, format_func=lambda value: value.isoformat(), key=key)
 
 
+def page_title(title: str, icon: str) -> None:
+    st.markdown(
+        f"""
+        <div class="page-title">
+            <img src="/app/static/icons/{icon}.png" alt="">
+            <h1>{title}</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def configuration_screen() -> None:
-    st.title("⚙️ Solver Configuration")
+    page_title("Solver Configuration", "factory")
     st.caption("Edit every vehicle type and optimize fleet count plus route freight cost.")
     programming_date = date_selector("configuration_date")
     vehicles = get_vehicle_master().copy()
@@ -441,7 +469,7 @@ def configuration_screen() -> None:
 
 
 def results_screen() -> None:
-    st.title("📊 Actual Optimization")
+    page_title("Actual Optimization", "actual")
     runs = get_runs()
     if runs.empty:
         st.info("Run an optimization to create the first result.")
@@ -534,7 +562,7 @@ def results_screen() -> None:
 
 
 def programming_screen() -> None:
-    st.title("📅 Daily Programming")
+    page_title("Daily Programming", "package")
     programming_date = date_selector("programming_date")
     with st.spinner("Loading daily programming..."):
         frame = daily_programming(programming_date)
@@ -566,8 +594,9 @@ def programming_screen() -> None:
 
 
 def route_network_screen() -> None:
+    page_title("Logistics Route Control Center", "route")
     st.markdown(
-        '<div class="control-banner">Logistics Route Control Center</div>',
+        '<div class="control-banner">Live Logistics Network</div>',
         unsafe_allow_html=True,
     )
     routes = get_route_network().copy()
@@ -808,7 +837,7 @@ def get_forecast_summary(run_id: str):
 
 
 def forecast_optimized_screen() -> None:
-    st.title("Forecast Optimization")
+    page_title("Forecast Optimization", "forecast")
     st.caption("Rolling 21-day demand forecast with P50 expected and P90 capacity plans.")
     run = get_latest_forecast()
     if run.empty:
