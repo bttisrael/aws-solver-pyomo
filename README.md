@@ -218,10 +218,10 @@ The dashboard provides four operator screens:
    vehicle type in an editable table. Users can enable vehicle types, change
    weight, pallet, volume, and cost/km parameters, tune the objective weights,
    and execute the Pyomo scenario without changing code.
-2. **Optimization Results** selects any persisted run, shows macro vehicle,
+2. **Actual Optimization** selects any persisted run, shows macro vehicle,
    route, box, weight, and occupancy KPIs, presents the vehicle summary, and
    provides the detailed BASE/TOP operational load plan with CSV export.
-3. **Forecast Optimized** shows the 21-day P50/P90 vehicle curve, forecast and
+3. **Forecast Optimization** shows the 21-day P50/P90 vehicle curve, forecast and
    governance KPIs, and date/scenario-level operational loads with CSV export.
 4. **Daily Programming** displays the selected input date with origin and
    destination filters, totals, and CSV export.

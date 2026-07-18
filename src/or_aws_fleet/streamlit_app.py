@@ -19,6 +19,8 @@ from or_aws_fleet.dashboard_data import (
     vehicle_master_data,
     vehicle_summary,
 )
+from or_aws_fleet.dsql_forecast import run_daily_forecast
+from or_aws_fleet.programming_model import VehicleType
 
 
 st.set_page_config(page_title="Beverage Load Optimizer", page_icon="🚚", layout="wide")
@@ -147,7 +149,7 @@ def configuration_screen() -> None:
         if not selected_vehicles:
             st.error("Enable at least one vehicle type before running the optimizer.")
             return
-        with st.spinner("Reading daily programming and optimizing all routes..."):
+        with st.spinner("Optimizing the selected day and the next 21 forecast days..."):
             try:
                 result = solve(
                     SolveRequest(
@@ -159,14 +161,33 @@ def configuration_screen() -> None:
                         persist=persist,
                     )
                 )
+                forecast_run_id = run_daily_forecast(
+                    run_date=programming_date,
+                    time_limit_seconds=int(time_limit),
+                    vehicle_types=[
+                        VehicleType(
+                            vehicle_type=item.vehicle_type,
+                            vehicle_capacity_m3=item.vehicle_capacity_m3,
+                            vehicle_capacity_kg=item.vehicle_capacity_kg,
+                            freight_cost_per_km=item.freight_cost_per_km,
+                            vehicle_capacity_pallets=item.vehicle_capacity_pallets,
+                        )
+                        for item in selected_vehicles
+                    ],
+                    vehicle_count_weight=vehicle_count_weight,
+                    freight_cost_weight=freight_cost_weight,
+                )
             except Exception as exc:
                 st.error(f"Optimization could not be completed: {exc}")
             else:
                 get_runs.clear()
+                get_latest_forecast.clear()
+                get_forecast_summary.clear()
                 st.session_state["selected_run_id"] = result.run_id
                 st.success(
                     f"Simulation completed: {result.vehicles} vehicles across "
-                    f"{result.routes} routes. Status: {result.status}."
+                    f"{result.routes} routes. The 21-day forecast optimization "
+                    f"was also refreshed (run {forecast_run_id[:8]}). Status: {result.status}."
                 )
                 cols = st.columns(5)
                 cols[0].metric("Vehicles", result.vehicles)
@@ -177,7 +198,7 @@ def configuration_screen() -> None:
 
 
 def results_screen() -> None:
-    st.title("📊 Optimization Results")
+    st.title("📊 Actual Optimization")
     runs = get_runs()
     if runs.empty:
         st.info("Run an optimization to create the first result.")
@@ -312,7 +333,7 @@ def get_forecast_summary(run_id: str):
 
 
 def forecast_optimized_screen() -> None:
-    st.title("Forecast Optimized")
+    st.title("Forecast Optimization")
     st.caption("Rolling 21-day demand forecast with P50 expected and P90 capacity plans.")
     run = get_latest_forecast()
     if run.empty:
@@ -375,15 +396,15 @@ st.sidebar.title("🚚 Load Optimizer")
 st.sidebar.caption(f"Updated {datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}")
 screen = st.sidebar.radio(
     "Navigation",
-    ["Solver Configuration", "Optimization Results", "Forecast Optimized", "Daily Programming"],
+    ["Solver Configuration", "Actual Optimization", "Forecast Optimization", "Daily Programming"],
 )
 
 try:
     if screen == "Solver Configuration":
         configuration_screen()
-    elif screen == "Optimization Results":
+    elif screen == "Actual Optimization":
         results_screen()
-    elif screen == "Forecast Optimized":
+    elif screen == "Forecast Optimization":
         forecast_optimized_screen()
     else:
         programming_screen()
