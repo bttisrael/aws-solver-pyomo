@@ -212,6 +212,10 @@ The workflow never receives or stores an AWS access key.
 
 ### Streamlit operations dashboard
 
+The interface uses a dark logistics control-center theme across every screen,
+with cyan operational KPIs, compact fleet panels, dark data grids, and a
+color-coded route map optimized for desktop demonstrations.
+
 The dashboard provides five operator screens:
 
 1. **Solver Configuration** selects the programming date and displays every

@@ -29,17 +29,184 @@ st.set_page_config(page_title="Beverage Load Optimizer", page_icon="🚚", layou
 st.markdown(
     """
     <style>
-    .stApp {background: #f5f8fc;}
-    [data-testid="stSidebar"] {background: #173b6c;}
-    [data-testid="stSidebar"] * {color: white;}
-    h1, h2, h3 {color: #173b6c;}
+    :root {
+        --bg: #050d15;
+        --panel: #0a1723;
+        --panel-2: #0d1d2b;
+        --line: #1b3c52;
+        --line-bright: #287094;
+        --cyan: #65d9ff;
+        --cyan-soft: #38bde8;
+        --text: #e9f6ff;
+        --muted: #8da7b8;
+        --orange: #ffad42;
+    }
+    .stApp {
+        background:
+            radial-gradient(circle at 45% -15%, rgba(37, 132, 173, .16), transparent 32rem),
+            linear-gradient(145deg, #050b12 0%, #07131e 55%, #06111a 100%);
+        color: var(--text);
+    }
+    [data-testid="stHeader"] {background: rgba(5, 13, 21, .82);}
+    [data-testid="stToolbar"] {right: 1rem;}
+    [data-testid="stMainBlockContainer"] {
+        max-width: 1600px;
+        padding-top: 2.4rem;
+        padding-bottom: 3rem;
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #081724 0%, #07121d 100%);
+        border-right: 1px solid #1b4259;
+        box-shadow: 12px 0 32px rgba(0, 0, 0, .26);
+    }
+    [data-testid="stSidebar"] * {color: var(--text);}
+    [data-testid="stSidebar"] [role="radiogroup"] label {
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: .48rem .65rem;
+        margin: .12rem 0;
+        transition: all .15s ease;
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:hover {
+        background: rgba(62, 194, 238, .08);
+        border-color: rgba(101, 217, 255, .22);
+    }
+    h1 {
+        color: var(--text);
+        letter-spacing: .035em;
+        text-transform: uppercase;
+        font-size: clamp(2rem, 3vw, 3.2rem) !important;
+        text-shadow: 0 0 24px rgba(101, 217, 255, .12);
+    }
+    h2, h3 {color: var(--text);}
+    p, label, [data-testid="stCaptionContainer"] {color: var(--muted) !important;}
+    hr {border-color: var(--line);}
     div[data-testid="stMetric"] {
-        background: white; border: 1px solid #d7e2ef; border-radius: 8px;
-        padding: 12px; box-shadow: 0 2px 5px rgba(20, 55, 95, .08);
+        background:
+            linear-gradient(145deg, rgba(15, 35, 50, .96), rgba(8, 23, 35, .96));
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        min-height: 108px;
+        padding: 16px 18px;
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, .025),
+            0 10px 26px rgba(0, 0, 0, .18);
+    }
+    div[data-testid="stMetric"]:hover {
+        border-color: var(--line-bright);
+        box-shadow: 0 0 22px rgba(63, 194, 235, .09);
+    }
+    [data-testid="stMetricLabel"] {
+        text-transform: uppercase;
+        letter-spacing: .055em;
+        font-size: .75rem;
+    }
+    [data-testid="stMetricValue"] {
+        color: var(--cyan);
+        text-shadow: 0 0 16px rgba(101, 217, 255, .24);
     }
     .section-title {
-        background: #173b6c; color: white; padding: 10px 14px;
-        border-radius: 6px; font-size: 1.2rem; font-weight: 700; margin: 12px 0;
+        background: linear-gradient(90deg, #102536, #0b1b29 70%, #0a1723);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--cyan-soft);
+        color: var(--text);
+        padding: 10px 14px;
+        border-radius: 6px;
+        font-size: .96rem;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+        margin: 12px 0;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .02);
+    }
+    .control-banner {
+        background: linear-gradient(90deg, transparent, rgba(27, 79, 105, .34), transparent);
+        border-top: 1px solid #17445d;
+        border-bottom: 1px solid #17445d;
+        color: var(--text);
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-align: center;
+        text-transform: uppercase;
+        padding: .72rem 1rem;
+        margin: -.4rem 0 1rem;
+    }
+    .system-status {
+        background: rgba(16, 43, 58, .75);
+        border: 1px solid #1c5069;
+        border-radius: 6px;
+        color: #a8ebff;
+        font-size: .72rem;
+        letter-spacing: .08em;
+        margin: .5rem 0 1.2rem;
+        padding: .55rem .7rem;
+        text-transform: uppercase;
+    }
+    .system-status::before {
+        background: #46e59b;
+        border-radius: 50%;
+        box-shadow: 0 0 9px #46e59b;
+        content: "";
+        display: inline-block;
+        height: 7px;
+        margin-right: 8px;
+        width: 7px;
+    }
+    [data-testid="stForm"] {
+        background: rgba(8, 22, 33, .76);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+    }
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="base-input"],
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextInput"] input {
+        background-color: #0b1b28 !important;
+        border-color: #20485f !important;
+        color: var(--text) !important;
+    }
+    div[data-baseweb="popover"], div[data-baseweb="menu"] {
+        background: #0b1b28 !important;
+        color: var(--text) !important;
+    }
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    [data-testid="stPydeckChart"] {
+        background: #07111a;
+        border: 1px solid #1d4d66;
+        border-radius: 8px;
+        box-shadow: 0 0 34px rgba(54, 182, 226, .08);
+        overflow: hidden;
+    }
+    .stButton > button, .stDownloadButton > button,
+    [data-testid="stFormSubmitButton"] > button {
+        background: linear-gradient(180deg, #12344a, #0b2434);
+        border: 1px solid #2d94ba;
+        border-radius: 6px;
+        color: #bcefff !important;
+        font-weight: 700;
+        letter-spacing: .03em;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover,
+    [data-testid="stFormSubmitButton"] > button:hover {
+        border-color: var(--cyan);
+        box-shadow: 0 0 16px rgba(101, 217, 255, .2);
+        color: white !important;
+    }
+    [data-testid="stAlert"] {
+        background: #0d2231;
+        border-color: #28546d;
+        color: var(--text);
+    }
+    [data-testid="stProgressBar"] > div > div {background: var(--cyan);}
+    @media (max-width: 900px) {
+        [data-testid="stMainBlockContainer"] {padding-top: 1.4rem;}
+        div[data-testid="stMetric"] {min-height: 92px;}
     }
     </style>
     """,
@@ -330,18 +497,20 @@ def programming_screen() -> None:
 
 
 def route_network_screen() -> None:
-    st.title("🗺️ Route Network")
-    st.caption(
-        "All factory-to-distribution-center lanes. Operational metrics use the latest "
-        "Actual Optimization run."
+    st.markdown(
+        '<div class="control-banner">Logistics Route Control Center</div>',
+        unsafe_allow_html=True,
     )
     routes = get_route_network().copy()
     if routes.empty:
         st.info("No routes are available in logistics.route.")
         return
 
-    origins = st.multiselect("Origins", sorted(routes["origin"].unique()))
-    destinations = st.multiselect("Destinations", sorted(routes["destiny"].unique()))
+    filter_left, filter_right = st.columns(2)
+    origins = filter_left.multiselect("Factories", sorted(routes["origin"].unique()))
+    destinations = filter_right.multiselect(
+        "Distribution centers", sorted(routes["destiny"].unique())
+    )
     filtered = routes
     if origins:
         filtered = filtered[filtered["origin"].isin(origins)]
@@ -358,14 +527,21 @@ def route_network_screen() -> None:
     filtered["occupancy_percent"] = filtered["average_occupancy"] * 100
     filtered["line_width"] = filtered["vehicle_count"].clip(lower=1, upper=12)
     filtered["route"] = filtered["origin"] + " → " + filtered["destiny"]
-
-    metrics = st.columns(6)
-    metrics[0].metric("Routes", f"{len(filtered):,}")
-    metrics[1].metric("Factories", filtered["origin"].nunique())
-    metrics[2].metric("Distribution centers", filtered["destiny"].nunique())
-    metrics[3].metric("Route distance", f"{filtered['display_distance_km'].sum():,.0f} km")
-    metrics[4].metric("Latest-run vehicles", f"{int(filtered['vehicle_count'].sum()):,}")
-    metrics[5].metric("Latest freight cost", f"{filtered['freight_cost'].sum():,.2f}")
+    route_palette = {
+        origin: color
+        for origin, color in zip(
+            sorted(routes["origin"].unique()),
+            (
+                [59, 202, 255, 210],
+                [61, 232, 151, 210],
+                [255, 174, 66, 220],
+                [255, 83, 83, 215],
+                [178, 108, 255, 215],
+            ),
+            strict=False,
+        )
+    }
+    filtered["route_color"] = filtered["origin"].map(route_palette)
 
     origin_nodes = filtered[
         ["origin", "origin_latitude", "origin_longitude"]
@@ -377,7 +553,7 @@ def route_network_screen() -> None:
         }
     )
     origin_nodes["location_type"] = "Factory"
-    origin_nodes["color"] = [[30, 136, 229, 220]] * len(origin_nodes)
+    origin_nodes["color"] = origin_nodes["location"].map(route_palette)
     destination_nodes = filtered[
         ["destiny", "destiny_latitude", "destiny_longitude"]
     ].drop_duplicates().rename(
@@ -388,18 +564,19 @@ def route_network_screen() -> None:
         }
     )
     destination_nodes["location_type"] = "Distribution center"
-    destination_nodes["color"] = [[255, 75, 75, 220]] * len(destination_nodes)
+    destination_nodes["color"] = [[104, 224, 255, 230]] * len(destination_nodes)
     nodes = pd.concat([origin_nodes, destination_nodes], ignore_index=True)
 
     midpoint_latitude = float(nodes["latitude"].mean())
     midpoint_longitude = float(nodes["longitude"].mean())
     deck = pdk.Deck(
-        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
         initial_view_state=pdk.ViewState(
             latitude=midpoint_latitude,
             longitude=midpoint_longitude,
-            zoom=3.2,
-            pitch=25,
+            zoom=3.25,
+            pitch=32,
+            bearing=-4,
         ),
         layers=[
             pdk.Layer(
@@ -407,11 +584,25 @@ def route_network_screen() -> None:
                 data=filtered,
                 get_source_position=["origin_longitude", "origin_latitude"],
                 get_target_position=["destiny_longitude", "destiny_latitude"],
-                get_source_color=[30, 136, 229, 150],
-                get_target_color=[255, 75, 75, 170],
+                get_source_color="route_color",
+                get_target_color="route_color",
+                get_width="line_width * 2.4",
+                width_min_pixels=3,
+                width_max_pixels=14,
+                opacity=0.16,
+                pickable=False,
+            ),
+            pdk.Layer(
+                "ArcLayer",
+                data=filtered,
+                get_source_position=["origin_longitude", "origin_latitude"],
+                get_target_position=["destiny_longitude", "destiny_latitude"],
+                get_source_color="route_color",
+                get_target_color="route_color",
                 get_width="line_width",
-                width_min_pixels=1,
-                width_max_pixels=8,
+                width_min_pixels=1.5,
+                width_max_pixels=7,
+                opacity=0.9,
                 pickable=True,
                 auto_highlight=True,
             ),
@@ -420,9 +611,12 @@ def route_network_screen() -> None:
                 data=nodes,
                 get_position=["longitude", "latitude"],
                 get_fill_color="color",
-                get_radius=30_000,
-                radius_min_pixels=5,
-                radius_max_pixels=12,
+                get_line_color=[205, 245, 255, 220],
+                stroked=True,
+                line_width_min_pixels=1,
+                get_radius=34_000,
+                radius_min_pixels=6,
+                radius_max_pixels=13,
                 pickable=True,
             ),
         ],
@@ -434,23 +628,73 @@ def route_network_screen() -> None:
                 "Weight: {load_weight_kg} kg<br/>"
                 "Freight cost: {freight_cost}"
             ),
-            "style": {"backgroundColor": "#173b6c", "color": "white"},
+            "style": {
+                "backgroundColor": "#081722",
+                "border": "1px solid #2c7595",
+                "color": "#e9f6ff",
+            },
         },
     )
-    st.pydeck_chart(deck, use_container_width=True, height=620)
-    st.caption("Blue markers are factories; red markers are distribution centers.")
 
-    st.markdown('<div class="section-title">Route metrics</div>', unsafe_allow_html=True)
-    route_name = st.selectbox("Route details", filtered["route"].tolist())
-    selected = filtered.loc[filtered["route"] == route_name].iloc[0]
-    details = st.columns(6)
-    details[0].metric("Driving distance", f"{float(selected['display_distance_km']):,.1f} km")
-    details[1].metric("Vehicles", f"{int(selected['vehicle_count']):,}")
-    details[2].metric("Weight", f"{float(selected['load_weight_kg']):,.0f} kg")
-    details[3].metric("Pallet demand", f"{float(selected['load_pallets']):,.1f}")
-    details[4].metric("Avg. occupancy", f"{float(selected['average_occupancy']):.1%}")
-    details[5].metric("Freight cost", f"{float(selected['freight_cost']):,.2f}")
+    overview, network_map, route_detail = st.columns([1.05, 3.7, 1.2], gap="medium")
+    with overview:
+        st.markdown(
+            '<div class="section-title">Network overview</div>',
+            unsafe_allow_html=True,
+        )
+        st.metric("Total routes", f"{len(filtered):,}")
+        st.metric("Active vehicles", f"{int(filtered['vehicle_count'].sum()):,}")
+        st.metric(
+            "Average efficiency",
+            f"{float(filtered['average_occupancy'].mean()):.1%}",
+        )
+        st.metric(
+            "Total lane distance",
+            f"{filtered['display_distance_km'].sum():,.0f} km",
+        )
 
+    with network_map:
+        st.markdown(
+            '<div class="section-title">Live route network</div>',
+            unsafe_allow_html=True,
+        )
+        st.pydeck_chart(deck, use_container_width=True, height=650)
+        st.caption(
+            "Colors identify factory route groups. Cyan markers represent distribution centers."
+        )
+
+    with route_detail:
+        st.markdown(
+            '<div class="section-title">Route details</div>',
+            unsafe_allow_html=True,
+        )
+        route_name = st.selectbox(
+            "Selected route", filtered["route"].tolist(), label_visibility="collapsed"
+        )
+        selected = filtered.loc[filtered["route"] == route_name].iloc[0]
+        st.metric(
+            "Driving distance",
+            f"{float(selected['display_distance_km']):,.1f} km",
+        )
+        st.metric("Vehicles", f"{int(selected['vehicle_count']):,}")
+        st.metric("Loaded weight", f"{float(selected['load_weight_kg']):,.0f} kg")
+        st.metric("Pallet demand", f"{float(selected['load_pallets']):,.1f}")
+        st.metric("Efficiency", f"{float(selected['average_occupancy']):.1%}")
+        st.metric("Freight cost", f"{float(selected['freight_cost']):,.2f}")
+
+        st.markdown(
+            '<div class="section-title">Longest lanes</div>',
+            unsafe_allow_html=True,
+        )
+        longest = filtered.nlargest(4, "display_distance_km")[
+            ["route", "display_distance_km"]
+        ].rename(columns={"route": "Route", "display_distance_km": "km"})
+        st.dataframe(longest, hide_index=True, use_container_width=True, height=175)
+
+    st.markdown(
+        '<div class="section-title">All route performance</div>',
+        unsafe_allow_html=True,
+    )
     route_table = filtered[
         [
             "origin", "destiny", "display_distance_km", "vehicle_count",
@@ -553,7 +797,11 @@ def forecast_optimized_screen() -> None:
 
 
 st.sidebar.title("🚚 Load Optimizer")
-st.sidebar.caption(f"Updated {datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}")
+st.sidebar.caption("AWS · PYOMO · STREAMLIT")
+st.sidebar.markdown(
+    '<div class="system-status">Optimization platform online</div>',
+    unsafe_allow_html=True,
+)
 screen = st.sidebar.radio(
     "Navigation",
     [
@@ -563,6 +811,10 @@ screen = st.sidebar.radio(
         "Route Network",
         "Daily Programming",
     ],
+)
+st.sidebar.caption(
+    f"Last interface refresh · "
+    f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}"
 )
 
 try:
