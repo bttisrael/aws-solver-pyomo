@@ -43,3 +43,44 @@ def prepare_route_map_data(routes: pd.DataFrame) -> pd.DataFrame:
     prepared["glow_width"] = prepared["line_width"] * 2.4
     prepared["route"] = prepared["origin"].astype(str) + " → " + prepared["destiny"].astype(str)
     return prepared.dropna(subset=list(ROUTE_COORDINATE_COLUMNS)).reset_index(drop=True)
+
+
+def calculate_cost_efficiency_summary(
+    routes: pd.DataFrame,
+    forecast_summary: pd.DataFrame,
+) -> dict[str, float]:
+    """Estimate current and forecast cost opportunity from unused vehicle capacity."""
+    current = routes.copy()
+    for column in ("freight_cost", "average_occupancy", "vehicle_count"):
+        current[column] = pd.to_numeric(current[column], errors="coerce").fillna(0.0)
+    current["average_occupancy"] = current["average_occupancy"].clip(0.0, 1.0)
+    current_cost = float(current["freight_cost"].sum())
+    current_avoidable = float(
+        (current["freight_cost"] * (1.0 - current["average_occupancy"])).sum()
+    )
+    current_vehicles = float(current["vehicle_count"].sum())
+    cost_per_vehicle = current_cost / current_vehicles if current_vehicles > 0 else 0.0
+
+    forecast = forecast_summary.loc[forecast_summary["scenario"] == "P50"].copy()
+    if forecast.empty:
+        forecast_cost = 0.0
+        forecast_avoidable = 0.0
+    else:
+        forecast["vehicle_count"] = pd.to_numeric(
+            forecast["vehicle_count"], errors="coerce"
+        ).fillna(0.0)
+        forecast["average_occupancy"] = pd.to_numeric(
+            forecast["average_occupancy"], errors="coerce"
+        ).fillna(0.0).clip(0.0, 1.0)
+        forecast["projected_cost"] = forecast["vehicle_count"] * cost_per_vehicle
+        forecast_cost = float(forecast["projected_cost"].sum())
+        forecast_avoidable = float(
+            (forecast["projected_cost"] * (1.0 - forecast["average_occupancy"])).sum()
+        )
+
+    return {
+        "current_cost": current_cost,
+        "current_avoidable": current_avoidable,
+        "forecast_cost": forecast_cost,
+        "forecast_avoidable": forecast_avoidable,
+    }

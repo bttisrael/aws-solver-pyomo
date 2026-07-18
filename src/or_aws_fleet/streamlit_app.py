@@ -25,7 +25,10 @@ from or_aws_fleet.dashboard_data import (
 )
 from or_aws_fleet.dsql_forecast import run_daily_forecast
 from or_aws_fleet.programming_model import VehicleType
-from or_aws_fleet.route_visualization import prepare_route_map_data
+from or_aws_fleet.route_visualization import (
+    calculate_cost_efficiency_summary,
+    prepare_route_map_data,
+)
 
 
 st.set_page_config(page_title="Beverage Load Optimizer", page_icon="🚚", layout="wide")
@@ -616,6 +619,79 @@ def route_network_screen() -> None:
     if routes.empty:
         st.info("No routes are available in logistics.route.")
         return
+
+    latest_forecast = get_latest_forecast()
+    forecast_summary = (
+        get_forecast_summary(str(latest_forecast.iloc[0]["run_id"]))
+        if not latest_forecast.empty
+        else pd.DataFrame()
+    )
+    cost_summary = calculate_cost_efficiency_summary(routes, forecast_summary)
+    st.markdown(
+        '<div class="section-title">Cost and efficiency opportunity</div>',
+        unsafe_allow_html=True,
+    )
+    cost_metrics = st.columns(4)
+    cost_metrics[0].metric("Current freight cost", f"{cost_summary['current_cost']:,.2f}")
+    cost_metrics[1].metric(
+        "Current avoidable cost",
+        f"{cost_summary['current_avoidable']:,.2f}",
+        help="Theoretical cost opportunity represented by unused current vehicle capacity.",
+    )
+    cost_metrics[2].metric(
+        "21-day forecast cost",
+        f"{cost_summary['forecast_cost']:,.2f}",
+        help="P50 vehicle requirements multiplied by the latest average freight cost per vehicle.",
+    )
+    cost_metrics[3].metric(
+        "Forecast avoidable cost",
+        f"{cost_summary['forecast_avoidable']:,.2f}",
+        help="Theoretical 21-day cost opportunity represented by forecast unused capacity.",
+    )
+
+    cost_chart_data = pd.DataFrame(
+        [
+            {"Period": "Current network", "Cost type": "Total cost", "Cost": cost_summary["current_cost"]},
+            {
+                "Period": "Current network",
+                "Cost type": "Avoidable at 100% efficiency",
+                "Cost": cost_summary["current_avoidable"],
+            },
+            {"Period": "21-day P50 forecast", "Cost type": "Total cost", "Cost": cost_summary["forecast_cost"]},
+            {
+                "Period": "21-day P50 forecast",
+                "Cost type": "Avoidable at 100% efficiency",
+                "Cost": cost_summary["forecast_avoidable"],
+            },
+        ]
+    )
+    cost_chart = (
+        alt.Chart(cost_chart_data)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            x=alt.X("Period:N", title=None, axis=alt.Axis(labelAngle=0, grid=False)),
+            xOffset="Cost type:N",
+            y=alt.Y("Cost:Q", title="Freight cost", axis=alt.Axis(grid=False)),
+            color=alt.Color(
+                "Cost type:N",
+                scale=alt.Scale(range=["#ffad42", "#65d9ff"]),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            tooltip=[
+                alt.Tooltip("Period:N"),
+                alt.Tooltip("Cost type:N"),
+                alt.Tooltip("Cost:Q", format=",.2f"),
+            ],
+        )
+        .properties(height=280)
+        .configure_view(strokeWidth=0)
+        .configure_axis(domain=False, tickColor="#1b3c52", labelColor="#8da7b8")
+    )
+    st.altair_chart(cost_chart, use_container_width=True)
+    st.caption(
+        "Avoidable cost is a theoretical capacity-utilization opportunity, not a guaranteed saving. "
+        "The 21-day P50 projection uses the latest observed average freight cost per active vehicle."
+    )
 
     filter_left, filter_right = st.columns(2)
     origins = filter_left.multiselect("Factories", sorted(routes["origin"].unique()))
