@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve
@@ -16,6 +17,7 @@ from or_aws_fleet.dashboard_data import (
     latest_forecast_run,
     operational_load_plan,
     optimization_runs,
+    route_network,
     vehicle_master_data,
     vehicle_summary,
 )
@@ -52,12 +54,17 @@ def get_dates():
 
 @st.cache_data(ttl=30, show_spinner=False)
 def get_runs():
-    return optimization_runs()
+    return optimization_runs(limit=5)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_vehicle_master():
     return vehicle_master_data()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_route_network():
+    return route_network()
 
 
 def date_selector(key: str):
@@ -322,6 +329,159 @@ def programming_screen() -> None:
     )
 
 
+def route_network_screen() -> None:
+    st.title("🗺️ Route Network")
+    st.caption(
+        "All factory-to-distribution-center lanes. Operational metrics use the latest "
+        "Actual Optimization run."
+    )
+    routes = get_route_network().copy()
+    if routes.empty:
+        st.info("No routes are available in logistics.route.")
+        return
+
+    origins = st.multiselect("Origins", sorted(routes["origin"].unique()))
+    destinations = st.multiselect("Destinations", sorted(routes["destiny"].unique()))
+    filtered = routes
+    if origins:
+        filtered = filtered[filtered["origin"].isin(origins)]
+    if destinations:
+        filtered = filtered[filtered["destiny"].isin(destinations)]
+    if filtered.empty:
+        st.warning("No routes match the selected filters.")
+        return
+
+    filtered = filtered.copy()
+    filtered["display_distance_km"] = filtered["google_driving_distance_km"].fillna(
+        filtered["distance_km"]
+    )
+    filtered["occupancy_percent"] = filtered["average_occupancy"] * 100
+    filtered["line_width"] = filtered["vehicle_count"].clip(lower=1, upper=12)
+    filtered["route"] = filtered["origin"] + " → " + filtered["destiny"]
+
+    metrics = st.columns(6)
+    metrics[0].metric("Routes", f"{len(filtered):,}")
+    metrics[1].metric("Factories", filtered["origin"].nunique())
+    metrics[2].metric("Distribution centers", filtered["destiny"].nunique())
+    metrics[3].metric("Route distance", f"{filtered['display_distance_km'].sum():,.0f} km")
+    metrics[4].metric("Latest-run vehicles", f"{int(filtered['vehicle_count'].sum()):,}")
+    metrics[5].metric("Latest freight cost", f"{filtered['freight_cost'].sum():,.2f}")
+
+    origin_nodes = filtered[
+        ["origin", "origin_latitude", "origin_longitude"]
+    ].drop_duplicates().rename(
+        columns={
+            "origin": "location",
+            "origin_latitude": "latitude",
+            "origin_longitude": "longitude",
+        }
+    )
+    origin_nodes["location_type"] = "Factory"
+    origin_nodes["color"] = [[30, 136, 229, 220]] * len(origin_nodes)
+    destination_nodes = filtered[
+        ["destiny", "destiny_latitude", "destiny_longitude"]
+    ].drop_duplicates().rename(
+        columns={
+            "destiny": "location",
+            "destiny_latitude": "latitude",
+            "destiny_longitude": "longitude",
+        }
+    )
+    destination_nodes["location_type"] = "Distribution center"
+    destination_nodes["color"] = [[255, 75, 75, 220]] * len(destination_nodes)
+    nodes = pd.concat([origin_nodes, destination_nodes], ignore_index=True)
+
+    midpoint_latitude = float(nodes["latitude"].mean())
+    midpoint_longitude = float(nodes["longitude"].mean())
+    deck = pdk.Deck(
+        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        initial_view_state=pdk.ViewState(
+            latitude=midpoint_latitude,
+            longitude=midpoint_longitude,
+            zoom=3.2,
+            pitch=25,
+        ),
+        layers=[
+            pdk.Layer(
+                "ArcLayer",
+                data=filtered,
+                get_source_position=["origin_longitude", "origin_latitude"],
+                get_target_position=["destiny_longitude", "destiny_latitude"],
+                get_source_color=[30, 136, 229, 150],
+                get_target_color=[255, 75, 75, 170],
+                get_width="line_width",
+                width_min_pixels=1,
+                width_max_pixels=8,
+                pickable=True,
+                auto_highlight=True,
+            ),
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=nodes,
+                get_position=["longitude", "latitude"],
+                get_fill_color="color",
+                get_radius=30_000,
+                radius_min_pixels=5,
+                radius_max_pixels=12,
+                pickable=True,
+            ),
+        ],
+        tooltip={
+            "html": (
+                "<b>{route}{location}</b><br/>"
+                "Driving distance: {display_distance_km} km<br/>"
+                "Vehicles: {vehicle_count}<br/>"
+                "Weight: {load_weight_kg} kg<br/>"
+                "Freight cost: {freight_cost}"
+            ),
+            "style": {"backgroundColor": "#173b6c", "color": "white"},
+        },
+    )
+    st.pydeck_chart(deck, use_container_width=True, height=620)
+    st.caption("Blue markers are factories; red markers are distribution centers.")
+
+    st.markdown('<div class="section-title">Route metrics</div>', unsafe_allow_html=True)
+    route_name = st.selectbox("Route details", filtered["route"].tolist())
+    selected = filtered.loc[filtered["route"] == route_name].iloc[0]
+    details = st.columns(6)
+    details[0].metric("Driving distance", f"{float(selected['display_distance_km']):,.1f} km")
+    details[1].metric("Vehicles", f"{int(selected['vehicle_count']):,}")
+    details[2].metric("Weight", f"{float(selected['load_weight_kg']):,.0f} kg")
+    details[3].metric("Pallet demand", f"{float(selected['load_pallets']):,.1f}")
+    details[4].metric("Avg. occupancy", f"{float(selected['average_occupancy']):.1%}")
+    details[5].metric("Freight cost", f"{float(selected['freight_cost']):,.2f}")
+
+    route_table = filtered[
+        [
+            "origin", "destiny", "display_distance_km", "vehicle_count",
+            "load_weight_kg", "load_pallets", "load_boxes",
+            "occupancy_percent", "freight_cost",
+        ]
+    ].rename(
+        columns={
+            "origin": "Origin",
+            "destiny": "Destination",
+            "display_distance_km": "Driving distance (km)",
+            "vehicle_count": "Vehicles",
+            "load_weight_kg": "Weight (kg)",
+            "load_pallets": "Pallet demand",
+            "load_boxes": "Boxes",
+            "occupancy_percent": "Avg. occupancy (%)",
+            "freight_cost": "Freight cost",
+        }
+    )
+    st.dataframe(
+        route_table,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Avg. occupancy (%)": st.column_config.ProgressColumn(
+                format="%.1f%%", min_value=0, max_value=100
+            )
+        },
+    )
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_latest_forecast():
     return latest_forecast_run()
@@ -396,7 +556,13 @@ st.sidebar.title("🚚 Load Optimizer")
 st.sidebar.caption(f"Updated {datetime.now(ZoneInfo('America/Sao_Paulo')):%Y-%m-%d %H:%M}")
 screen = st.sidebar.radio(
     "Navigation",
-    ["Solver Configuration", "Actual Optimization", "Forecast Optimization", "Daily Programming"],
+    [
+        "Solver Configuration",
+        "Actual Optimization",
+        "Forecast Optimization",
+        "Route Network",
+        "Daily Programming",
+    ],
 )
 
 try:
@@ -406,6 +572,8 @@ try:
         results_screen()
     elif screen == "Forecast Optimization":
         forecast_optimized_screen()
+    elif screen == "Route Network":
+        route_network_screen()
     else:
         programming_screen()
 except Exception as exc:

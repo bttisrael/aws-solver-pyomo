@@ -60,6 +60,52 @@ def vehicle_master_data() -> pd.DataFrame:
     )
 
 
+def route_network() -> pd.DataFrame:
+    return _query(
+        """
+        WITH latest_run AS (
+            SELECT run_id
+            FROM logistics.optimization_runs
+            ORDER BY created_at DESC
+            LIMIT 1
+        ),
+        route_metrics AS (
+            SELECT assignment.origin, assignment.destiny,
+                   COUNT(*) AS vehicle_count,
+                   SUM(assignment.load_weight_kg) AS load_weight_kg,
+                   SUM(assignment.load_pallets) AS load_pallets,
+                   SUM(assignment.load_boxes) AS load_boxes,
+                   SUM(assignment.freight_cost) AS freight_cost,
+                   AVG(
+                       GREATEST(
+                           assignment.weight_utilization,
+                           assignment.pallet_utilization,
+                           assignment.volume_utilization
+                       )
+                   ) AS average_occupancy
+            FROM logistics.optimization_vehicle_assignments AS assignment
+            WHERE assignment.run_id = (SELECT run_id FROM latest_run)
+            GROUP BY assignment.origin, assignment.destiny
+        )
+        SELECT route.origin, route.destiny,
+               route.origin_latitude, route.origin_longitude,
+               route.destiny_latitude, route.destiny_longitude,
+               route.distance_km,
+               route.google_driving_distance_km,
+               COALESCE(metrics.vehicle_count, 0) AS vehicle_count,
+               COALESCE(metrics.load_weight_kg, 0) AS load_weight_kg,
+               COALESCE(metrics.load_pallets, 0) AS load_pallets,
+               COALESCE(metrics.load_boxes, 0) AS load_boxes,
+               COALESCE(metrics.freight_cost, 0) AS freight_cost,
+               COALESCE(metrics.average_occupancy, 0) AS average_occupancy
+        FROM logistics.route AS route
+        LEFT JOIN route_metrics AS metrics
+          ON metrics.origin = route.origin AND metrics.destiny = route.destiny
+        ORDER BY route.origin, route.destiny
+        """
+    )
+
+
 def optimization_runs(limit: int = 50) -> pd.DataFrame:
     return _query(
         """
