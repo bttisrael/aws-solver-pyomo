@@ -67,16 +67,31 @@ def main() -> None:
     handler = load_handler()
     region = handler.aws_region()
     endpoint = handler.resolve_dsql_endpoint(region)
+    programming_start = args.end_date - timedelta(days=max(args.programming_days - 1, 0))
     total_rows = 0
     conn = handler.connect_dsql(endpoint, region)
     try:
         handler.ensure_table(conn)
         materials = handler.load_materials(conn)
+        if not args.dry_run and args.programming_days > 0:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT date FROM logistics.daily_programming "
+                "WHERE date < %s ORDER BY date",
+                (programming_start,),
+            )
+            expired_dates = [row[0] for row in cursor.fetchall()]
+            for expired_date in expired_dates:
+                cursor.execute(
+                    "DELETE FROM logistics.daily_programming WHERE date = %s",
+                    (expired_date,),
+                )
+                conn.commit()
+            cursor.close()
     finally:
         conn.close()
 
     run_dates = list(dates_between(args.start_date, args.end_date))
-    programming_start = args.end_date - timedelta(days=max(args.programming_days - 1, 0))
 
     def process_date(run_date: date):
         rows, factor = handler.generate_rows(
