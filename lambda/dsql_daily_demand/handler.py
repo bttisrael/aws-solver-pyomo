@@ -306,7 +306,22 @@ def ensure_table(conn) -> None:
 def replace_daily_rows(conn, run_date: date, rows) -> None:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM logistics.daily_demand WHERE date = %s", (run_date,))
-    cursor.executemany(INSERT_SQL, rows)
+    # pg8000 implements executemany as one network round-trip per row. That is
+    # acceptable for a single scheduled day, but unnecessarily slow and prone
+    # to connection timeouts during a historical backfill. Keep each statement
+    # comfortably below PostgreSQL's parameter limit while inserting in bulk.
+    chunk_size = 100
+    conflict_clause = INSERT_SQL.split("VALUES", 1)[1].split("ON CONFLICT", 1)[1]
+    insert_prefix = INSERT_SQL.split("VALUES", 1)[0]
+    row_placeholder = "(" + ", ".join(["%s"] * 7) + ")"
+    for offset in range(0, len(rows), chunk_size):
+        chunk = rows[offset : offset + chunk_size]
+        placeholders = ", ".join([row_placeholder] * len(chunk))
+        parameters = tuple(value for row in chunk for value in row)
+        cursor.execute(
+            f"{insert_prefix}VALUES {placeholders} ON CONFLICT {conflict_clause}",
+            parameters,
+        )
     conn.commit()
     cursor.close()
 
