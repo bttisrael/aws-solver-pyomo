@@ -174,6 +174,33 @@ def forecast_optimization_summary(run_id: str) -> pd.DataFrame:
     )
 
 
+def forecast_demand_comparison(run_id: str, run_date: date) -> pd.DataFrame:
+    forecast = _query(
+        """SELECT forecast_date, SUM(p50_units) AS model_forecast
+           FROM logistics.demand_forecast
+           WHERE run_id = %s
+           GROUP BY forecast_date
+           ORDER BY forecast_date""",
+        (run_id,),
+    )
+    history = _query(
+        """SELECT date, SUM(units) AS daily_units
+           FROM logistics.daily_programming
+           WHERE date >= %s AND date <= %s
+           GROUP BY date
+           ORDER BY date""",
+        (run_date - pd.Timedelta(days=56), run_date),
+    )
+    if forecast.empty or history.empty:
+        return pd.DataFrame()
+    history["weekday"] = pd.to_datetime(history["date"]).dt.weekday
+    weekday_average = history.groupby("weekday")["daily_units"].mean()
+    comparison = forecast.copy()
+    comparison["weekday"] = pd.to_datetime(comparison["forecast_date"]).dt.weekday
+    comparison["moving_average"] = comparison["weekday"].map(weekday_average)
+    return comparison[["forecast_date", "model_forecast", "moving_average"]]
+
+
 def forecast_vehicle_summary(run_id: str, forecast_date: date, scenario: str) -> pd.DataFrame:
     return _query(
         """SELECT origin, destiny, vehicle_id, load_pallets, load_boxes,

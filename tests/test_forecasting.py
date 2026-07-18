@@ -4,6 +4,7 @@ import pandas as pd
 
 from or_aws_fleet.forecasting import (
     ForecastMetrics,
+    calculate_aggregate_metrics,
     calculate_metrics,
     retraining_decision,
     seasonal_naive_forecast,
@@ -55,6 +56,20 @@ def test_metrics_and_retraining_require_three_failures_and_cooldown() -> None:
 def test_healthy_metrics_do_not_trigger_retraining() -> None:
     metrics = ForecastMetrics(wape=0.10, mase=0.7, bias=0.01, interval_coverage=0.80)
     assert not retraining_decision(metrics, consecutive_failures=10, days_since_training=30).should_retrain
+
+
+def test_aggregate_metrics_compare_complete_daily_totals() -> None:
+    metrics = calculate_aggregate_metrics(
+        actual_total=1_000,
+        predicted_total=900,
+        lower_total=800,
+        upper_total=1_100,
+        historical_daily_totals=pd.Series([800, 900, 850, 1_000]),
+    )
+    assert metrics.wape == 0.1
+    assert metrics.bias == 0.1
+    assert metrics.mase == 1.0
+    assert metrics.interval_coverage == 1.0
 
 
 def test_forecast_excludes_series_not_active_in_latest_snapshot() -> None:

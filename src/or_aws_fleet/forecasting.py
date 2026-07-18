@@ -102,6 +102,27 @@ def calculate_metrics(actual: pd.Series, predicted: pd.Series, lower: pd.Series,
     return ForecastMetrics(wape=wape, mase=mase, bias=bias, interval_coverage=coverage)
 
 
+def calculate_aggregate_metrics(
+    actual_total: float,
+    predicted_total: float,
+    lower_total: float,
+    upper_total: float,
+    historical_daily_totals: pd.Series,
+) -> ForecastMetrics:
+    """Evaluate a sparse operational forecast at the daily business-total level."""
+    actual_total = max(float(actual_total), 0.0)
+    predicted_total = max(float(predicted_total), 0.0)
+    error = actual_total - predicted_total
+    denominator = max(actual_total, 1.0)
+    wape = abs(error) / denominator
+    bias = error / denominator
+    history = pd.to_numeric(historical_daily_totals, errors="coerce").dropna()
+    naive_scale = float(history.diff().abs().dropna().mean()) if len(history) > 1 else 0.0
+    mase = abs(error) / naive_scale if naive_scale > 0 else wape
+    coverage = float(lower_total <= actual_total <= upper_total)
+    return ForecastMetrics(wape=wape, mase=mase, bias=bias, interval_coverage=coverage)
+
+
 def retraining_decision(
     metrics: ForecastMetrics,
     consecutive_failures: int,
