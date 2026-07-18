@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -42,6 +43,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-rows", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=271828)
     parser.add_argument("--units-multiplier", type=int, default=4)
+    parser.add_argument(
+        "--programming-days",
+        type=int,
+        default=30,
+        help="Rebuild daily_programming only for this rolling number of latest dates.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="Concurrent date-level database workers used for historical backfills.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -54,35 +67,51 @@ def main() -> None:
     handler = load_handler()
     region = handler.aws_region()
     endpoint = handler.resolve_dsql_endpoint(region)
-    conn = handler.connect_dsql(endpoint, region)
     total_rows = 0
+    conn = handler.connect_dsql(endpoint, region)
     try:
         handler.ensure_table(conn)
         materials = handler.load_materials(conn)
-        run_dates = list(dates_between(args.start_date, args.end_date))
-        for index, run_date in enumerate(run_dates, 1):
-            rows, factor = handler.generate_rows(
-                run_date,
-                materials,
-                args.baseline_rows,
-                args.seed,
-                args.units_multiplier,
-            )
-            if not args.dry_run:
-                handler.replace_daily_rows(conn, run_date, rows)
-                programming_rows = handler.replace_daily_programming(conn, run_date)
-                if programming_rows != len(rows):
-                    raise RuntimeError(
-                        f"Programming row mismatch for {run_date}: {programming_rows} != {len(rows)}"
-                    )
-            total_rows += len(rows)
+    finally:
+        conn.close()
+
+    run_dates = list(dates_between(args.start_date, args.end_date))
+    programming_start = args.end_date - timedelta(days=max(args.programming_days - 1, 0))
+
+    def process_date(run_date: date):
+        rows, factor = handler.generate_rows(
+            run_date,
+            materials,
+            args.baseline_rows,
+            args.seed,
+            args.units_multiplier,
+        )
+        if not args.dry_run:
+            worker_conn = handler.connect_dsql(endpoint, region)
+            try:
+                handler.replace_daily_rows(worker_conn, run_date, rows)
+                if args.programming_days > 0 and run_date >= programming_start:
+                    programming_rows = handler.replace_daily_programming(worker_conn, run_date)
+                    if programming_rows != len(rows):
+                        raise RuntimeError(
+                            f"Programming row mismatch for {run_date}: "
+                            f"{programming_rows} != {len(rows)}"
+                        )
+            finally:
+                worker_conn.close()
+        return run_date, len(rows), factor
+
+    with ThreadPoolExecutor(max_workers=max(args.workers, 1)) as executor:
+        for index, (run_date, row_count, factor) in enumerate(
+            executor.map(process_date, run_dates), 1
+        ):
+            total_rows += row_count
             if index == 1 or index % 25 == 0 or index == len(run_dates):
                 print(
                     f"progress={index}/{len(run_dates)} date={run_date} "
-                    f"rows={len(rows)} factor={factor:.4f}"
+                    f"rows={row_count} factor={factor:.4f}",
+                    flush=True,
                 )
-    finally:
-        conn.close()
     print(
         f"completed dates={len(run_dates)} rows={total_rows} dry_run={args.dry_run} "
         f"units_multiplier={args.units_multiplier}"
