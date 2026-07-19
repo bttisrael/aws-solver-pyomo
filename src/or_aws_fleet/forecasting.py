@@ -24,6 +24,26 @@ class RetrainingDecision:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class AutoMLForecastResult:
+    forecast: pd.DataFrame
+    model_version: str
+    validation_wape: float
+    baseline_wape: float
+    champion: AutoMLChampion
+
+
+@dataclass
+class AutoMLChampion:
+    model: object
+    model_version: str
+    lower_factor: float
+    upper_factor: float
+    validation_wape: float
+    baseline_wape: float
+    trained_on: date
+
+
 def _quantile(values: pd.Series, probability: float) -> float:
     return float(values.quantile(probability)) if len(values) else 0.0
 
@@ -85,6 +105,170 @@ def seasonal_naive_forecast(
             )
     result = pd.DataFrame(rows)
     return result.merge(attributes, on=keys, how="left")
+
+
+def _daily_features(day: pd.Timestamp, values: list[float], start: pd.Timestamp) -> list[float]:
+    """Build leakage-free calendar, lag, and rolling features for one forecast day."""
+    day_of_year = day.dayofyear
+    weekday = day.weekday()
+    return [
+        float((day - start).days),
+        float(np.sin(2 * np.pi * weekday / 7)),
+        float(np.cos(2 * np.pi * weekday / 7)),
+        float(np.sin(2 * np.pi * day_of_year / 365.25)),
+        float(np.cos(2 * np.pi * day_of_year / 365.25)),
+        float(values[-1]),
+        float(values[-7]),
+        float(values[-14]),
+        float(values[-21]),
+        float(values[-28]),
+        float(np.mean(values[-7:])),
+        float(np.mean(values[-14:])),
+        float(np.mean(values[-28:])),
+        float(np.std(values[-7:])),
+        float(np.std(values[-28:])),
+    ]
+
+
+def _supervised_daily_totals(daily: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+    values = daily.astype(float).tolist()
+    dates = list(pd.to_datetime(daily.index))
+    features = [
+        _daily_features(dates[index], values[:index], dates[0])
+        for index in range(28, len(values))
+    ]
+    return np.asarray(features, dtype=float), np.asarray(values[28:], dtype=float)
+
+
+def _recursive_daily_forecast(model, history: pd.Series, future_dates: list[pd.Timestamp]) -> np.ndarray:
+    values = history.astype(float).tolist()
+    start = pd.Timestamp(history.index[0])
+    predictions: list[float] = []
+    for forecast_date in future_dates:
+        features = np.asarray([_daily_features(forecast_date, values, start)], dtype=float)
+        prediction = max(float(model.predict(features)[0]), 0.0)
+        predictions.append(prediction)
+        values.append(prediction)
+    return np.asarray(predictions, dtype=float)
+
+
+def _allocate_total(base: pd.Series, total: float) -> np.ndarray:
+    weights = pd.to_numeric(base, errors="coerce").fillna(0).clip(lower=0).to_numpy(float)
+    weights = weights / weights.sum() if weights.sum() > 0 else np.full(len(weights), 1 / len(weights))
+    raw = weights * max(total, 0.0)
+    allocated = np.floor(raw).astype(int)
+    remainder = max(int(round(total)) - int(allocated.sum()), 0)
+    if remainder:
+        order = np.argsort(-(raw - allocated))
+        allocated[order[:remainder]] += 1
+    return allocated
+
+
+def automl_forecast(
+    history: pd.DataFrame,
+    run_date: date,
+    horizon_days: int = FORECAST_HORIZON_DAYS,
+    champion: AutoMLChampion | None = None,
+) -> AutoMLForecastResult:
+    """Train and select a real ML champion, then produce route/SKU P10/P50/P90 plans.
+
+    Candidate models are evaluated on a recursive 21-day holdout. The best WAPE
+    model is refit on all available history. Its daily business forecast is
+    disaggregated to active route/SKU series using same-weekday demand shares.
+    """
+    from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor
+    from sklearn.ensemble import RandomForestRegressor
+
+    baseline = seasonal_naive_forecast(history, run_date, horizon_days)
+    frame = history.copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["units"] = pd.to_numeric(frame["units"], errors="coerce").fillna(0).clip(lower=0)
+    daily = frame.groupby("date")["units"].sum().sort_index().asfreq("D", fill_value=0)
+    if len(daily) < 70:
+        raise ValueError("AutoML forecasting requires at least 70 consecutive historical days.")
+
+    if champion is None:
+        validation_days = min(21, len(daily) - 56)
+        training_daily = daily.iloc[:-validation_days]
+        validation_actual = daily.iloc[-validation_days:].to_numpy(float)
+        x_train, y_train = _supervised_daily_totals(training_daily)
+        candidates = {
+            "hist-gradient-boosting": HistGradientBoostingRegressor(
+                max_iter=220, learning_rate=0.055, max_leaf_nodes=15,
+                l2_regularization=1.0, random_state=271828,
+            ),
+            "random-forest": RandomForestRegressor(
+                n_estimators=180, max_depth=10, min_samples_leaf=3, n_jobs=-1,
+                random_state=271828,
+            ),
+            "extra-trees": ExtraTreesRegressor(
+                n_estimators=180, max_depth=12, min_samples_leaf=2, n_jobs=-1,
+                random_state=271828,
+            ),
+        }
+        scored: list[tuple[float, str, object, np.ndarray]] = []
+        validation_dates = list(pd.to_datetime(daily.index[-validation_days:]))
+        for name, model in candidates.items():
+            model.fit(x_train, y_train)
+            predictions = _recursive_daily_forecast(model, training_daily, validation_dates)
+            wape = float(
+                np.abs(validation_actual - predictions).sum()
+                / max(validation_actual.sum(), 1.0)
+            )
+            scored.append((wape, name, model, predictions))
+        validation_wape, champion_name, model, validation_predictions = min(
+            scored, key=lambda item: item[0]
+        )
+        weekday_baseline = training_daily.groupby(training_daily.index.weekday).mean()
+        baseline_predictions = np.asarray(
+            [float(weekday_baseline.loc[day.weekday()]) for day in validation_dates]
+        )
+        baseline_wape = float(
+            np.abs(validation_actual - baseline_predictions).sum()
+            / max(validation_actual.sum(), 1.0)
+        )
+        relative_residuals = (validation_actual - validation_predictions) / np.maximum(
+            validation_predictions, 1.0
+        )
+        x_full, y_full = _supervised_daily_totals(daily)
+        model.fit(x_full, y_full)
+        champion = AutoMLChampion(
+            model=model,
+            model_version=f"automl-{champion_name}-{run_date:%Y%m%d}",
+            lower_factor=max(
+                0.35, 1.0 + float(np.quantile(relative_residuals, 0.10))
+            ),
+            upper_factor=max(
+                1.05, 1.0 + float(np.quantile(relative_residuals, 0.90))
+            ),
+            validation_wape=validation_wape,
+            baseline_wape=baseline_wape,
+            trained_on=run_date,
+        )
+    future_dates = [pd.Timestamp(run_date + timedelta(days=offset)) for offset in range(1, horizon_days + 1)]
+    daily_p50 = _recursive_daily_forecast(champion.model, daily, future_dates)
+    result_frames: list[pd.DataFrame] = []
+    for forecast_date, total_p50 in zip(future_dates, daily_p50, strict=True):
+        day_frame = baseline.loc[baseline["forecast_date"] == forecast_date.date()].copy()
+        if day_frame.empty:
+            continue
+        day_frame["p50_units"] = _allocate_total(day_frame["p50_units"], total_p50)
+        day_frame["p10_units"] = _allocate_total(
+            day_frame["p50_units"], total_p50 * champion.lower_factor
+        )
+        day_frame["p90_units"] = _allocate_total(
+            day_frame["p50_units"], total_p50 * champion.upper_factor
+        )
+        day_frame["model_version"] = champion.model_version
+        result_frames.append(day_frame)
+    forecast = pd.concat(result_frames, ignore_index=True)
+    return AutoMLForecastResult(
+        forecast=forecast,
+        model_version=champion.model_version,
+        validation_wape=champion.validation_wape,
+        baseline_wape=champion.baseline_wape,
+        champion=champion,
+    )
 
 
 def calculate_metrics(actual: pd.Series, predicted: pd.Series, lower: pd.Series, upper: pd.Series) -> ForecastMetrics:

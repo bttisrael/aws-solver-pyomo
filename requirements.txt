@@ -3,6 +3,8 @@ fastapi>=0.128.0
 highspy==1.8.1
 numpy==2.2.1
 pandas==2.2.3
+scikit-learn>=1.6,<1.7
+joblib>=1.4,<2
 pyomo==6.8.2
 pydeck==0.9.3
 psycopg[binary]>=3.3.4

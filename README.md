@@ -13,7 +13,7 @@ Amazon EventBridge Scheduler
       |
       +-- Amazon ECS Fargate task
           |
-          +-- seasonal champion forecast (P10/P50/P90)
+          +-- persisted AutoML champion forecast (P10/P50/P90)
           +-- solve P50 and P90 Pyomo fleet-sizing plans for D+1..D+21
           +-- persist forecasts, vehicle assignments, and load plans in Aurora DSQL
 
@@ -28,12 +28,14 @@ Amazon Aurora DSQL
 ## Forecasting and model governance
 
 The production forecast is refreshed every day but the model is not retrained
-every day. The inexpensive `seasonal-naive-v1` champion uses recent observations
-from the same weekday and produces P10, P50, and P90 demand for each
-origin/destination/SKU series active in the latest operational snapshot. This
-active-series guard avoids forecasting the large sparse cartesian product of
-historical synthetic orders. P50 drives the expected plan; P90 provides a
-conservative capacity plan.
+every day. On the first run, the training pipeline evaluates histogram gradient
+boosting, random forest, and extremely randomized trees on a recursive 21-day
+time holdout. The lowest-WAPE candidate is refit on the full one-year history,
+versioned in `forecast_model_registry`, and persisted in the private artifacts
+S3 bucket. Daily runs load that champion to predict the next 21 business totals.
+The same-weekday route/SKU profile disaggregates those ML totals to active demand
+series, while validation residuals produce calibrated P10/P50/P90 scenarios.
+P50 drives the expected plan; P90 provides a conservative capacity plan.
 
 Demand generation uses persistent intermittent route-SKU series rather than a
 new random product mix every day. Stable base velocities are combined with
@@ -42,13 +44,14 @@ cycles, multi-day promotions, occasional stockouts, heavy-tailed order noise,
 and rare market-wide shocks. This creates learnable structure while retaining
 realistic residual uncertainty for AutoML challenger evaluation.
 
-AutoML retraining is recommended only after three consecutive failed monitoring
+AutoML retraining is triggered only after three consecutive failed monitoring
 evaluations and at least seven days since the previous training job. The gates
 are WAPE above 20%, MASE above 1.0, absolute bias above 7%, or prediction interval
-coverage outside 70%-90%. `ENABLE_AUTOML_RETRAINING=false` is intentionally set
-in production until a SageMaker training budget and execution role are approved.
-Daily forecasts continue normally while a challenger is trained and only a
-challenger that improves WAPE by at least 5% should replace the champion.
+coverage outside 70%-90%. The persisted champion remains available between
+training jobs, so daily forecast generation does not incur daily training cost.
+The seasonal weekday forecast remains the validation benchmark and supplies the
+route/SKU allocation profile; the persisted AutoML champion produces the daily
+business totals used by the production forecast.
 
 Forecast tables:
 
@@ -58,6 +61,7 @@ logistics.demand_forecast
 logistics.forecast_optimization_runs
 logistics.forecast_vehicle_assignments
 logistics.forecast_load_plan
+logistics.forecast_model_registry
 ```
 
 ## Optimization Problem
