@@ -8,6 +8,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
+from or_aws_fleet.analytics_agent import daily_budget_usd, get_daily_usage, run_analytics_agent
 from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve
 from or_aws_fleet.dashboard_data import (
     available_programming_dates,
@@ -135,6 +136,9 @@ st.markdown(
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(5) p::before {
         background-image: url("/app/static/icons/package.png");
+    }
+    [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(6) p::before {
+        background-image: url("/app/static/icons/actual.png");
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
         background: rgba(62, 194, 238, .12);
@@ -1048,6 +1052,68 @@ def forecast_optimized_screen() -> None:
     )
 
 
+def analytics_agent_screen() -> None:
+    page_title("AI Data Analyst", "actual")
+    st.caption(
+        "Ask questions about demand, routes, vehicles, forecasts, and optimization results. "
+        "The CrewAI agent uses a read-only, curated connection to Aurora DSQL."
+    )
+
+    usage = get_daily_usage()
+    budget = daily_budget_usd()
+    remaining = max(0.0, budget - usage.estimated_cost_usd)
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("Daily budget", f"${budget:.2f}")
+    metric_columns[1].metric("Estimated usage", f"${usage.estimated_cost_usd:.3f}")
+    metric_columns[2].metric("Remaining", f"${remaining:.3f}")
+    metric_columns[3].metric("Questions today", f"{usage.request_count:,}")
+    st.progress(min(1.0, usage.estimated_cost_usd / budget if budget else 1.0))
+    st.caption(
+        "Powered by CrewAI and Claude 3 Haiku on Amazon Bedrock. Quantitative answers must be "
+        "grounded in a curated database tool; arbitrary SQL and database writes are disabled."
+    )
+
+    if "analytics_messages" not in st.session_state:
+        st.session_state.analytics_messages = [
+            {
+                "role": "assistant",
+                "content": (
+                    "I can analyze the latest optimization, the 21-day forecast, vehicle "
+                    "capacities, routes, and daily demand. What would you like to know?"
+                ),
+            }
+        ]
+
+    for message in st.session_state.analytics_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    question = st.chat_input(
+        "Example: Which routes have the highest freight cost in the latest optimization?",
+        disabled=remaining <= 0,
+        max_chars=800,
+    )
+    if question:
+        st.session_state.analytics_messages.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
+        recent_messages = st.session_state.analytics_messages[-7:-1]
+        context = "\n".join(
+            f"{message['role']}: {message['content']}" for message in recent_messages
+        )
+        with st.chat_message("assistant"):
+            with st.spinner("Consulting the project data and preparing a grounded answer..."):
+                try:
+                    answer = run_analytics_agent(question, context)
+                except Exception:
+                    answer = (
+                        "I could not complete this analysis. The model or database service may "
+                        "be temporarily unavailable. Please try again in a moment."
+                    )
+                st.markdown(answer)
+        st.session_state.analytics_messages.append({"role": "assistant", "content": answer})
+
+
 st.sidebar.markdown(
     """
     <div class="sidebar-brand">
@@ -1068,6 +1134,7 @@ navigation = {
     "Forecast Optimization": forecast_optimized_screen,
     "Route Network": route_network_screen,
     "Daily Programming": programming_screen,
+    "AI Data Analyst": analytics_agent_screen,
 }
 screen = st.sidebar.radio(
     "Navigation",
