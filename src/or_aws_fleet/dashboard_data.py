@@ -152,12 +152,16 @@ def operational_load_plan(run_id: str) -> pd.DataFrame:
 
 def latest_forecast_run() -> pd.DataFrame:
     return _query(
-        """SELECT run_id, forecast_run_date, created_at, model_version, horizon_days,
-                  status, wape, mase, bias, interval_coverage, retraining_recommended,
-                  retraining_reasons
-           FROM logistics.forecast_runs
-           WHERE status = 'COMPLETE'
-           ORDER BY created_at DESC
+        """SELECT runs.run_id, runs.forecast_run_date, runs.created_at,
+                  runs.model_version, runs.horizon_days, runs.status,
+                  runs.wape, runs.mase, runs.bias, runs.interval_coverage,
+                  runs.retraining_recommended, runs.retraining_reasons,
+                  registry.validation_wape, registry.baseline_wape
+           FROM logistics.forecast_runs AS runs
+           LEFT JOIN logistics.forecast_model_registry AS registry
+             ON registry.model_version = runs.model_version
+           WHERE runs.status = 'COMPLETE'
+           ORDER BY runs.created_at DESC
            LIMIT 1"""
     )
 

@@ -1003,24 +1003,38 @@ def forecast_optimized_screen() -> None:
             "selected by recursive holdout WAPE; retraining is performance-gated."
         )
 
-    st.markdown('<div class="section-title">Forecast accuracy and governance</div>', unsafe_allow_html=True)
-    accuracy = st.columns(5)
-    accuracy[0].metric(
-        "WAPE",
-        "Pending" if pd.isna(selected_run["wape"]) else f"{float(selected_run['wape']):.1%}",
-        help="Absolute daily-total forecast error divided by actual daily demand.",
+    st.markdown('<div class="section-title">Model performance and governance</div>', unsafe_allow_html=True)
+    model_wape = selected_run.get("validation_wape")
+    baseline_wape = selected_run.get("baseline_wape")
+    improvement = (
+        1 - float(model_wape) / float(baseline_wape)
+        if pd.notna(model_wape) and pd.notna(baseline_wape) and float(baseline_wape) > 0
+        else None
     )
-    accuracy[1].metric("MASE", "Pending" if pd.isna(selected_run["mase"]) else f"{float(selected_run['mase']):.2f}")
+    accuracy = st.columns(4)
+    accuracy[0].metric(
+        "Holdout WAPE",
+        "Pending" if pd.isna(model_wape) else f"{float(model_wape):.1%}",
+        help="Champion error on the recursive 21-day validation holdout.",
+    )
+    accuracy[1].metric(
+        "Baseline WAPE",
+        "Pending" if pd.isna(baseline_wape) else f"{float(baseline_wape):.1%}",
+        help="Error from the same-weekday benchmark on the identical holdout.",
+    )
     accuracy[2].metric(
-        "Bias",
-        "Pending" if pd.isna(selected_run["bias"]) else f"{float(selected_run['bias']):.1%}",
-        help="Actual minus forecast, divided by actual demand. Negative means over-forecasting.",
+        "Improvement vs. baseline",
+        "Pending" if improvement is None else f"{improvement:.1%}",
+        help="Relative WAPE reduction achieved by the AutoML champion.",
     )
     accuracy[3].metric(
-        "Interval coverage", "Pending" if pd.isna(selected_run["interval_coverage"])
-        else f"{float(selected_run['interval_coverage']):.1%}",
+        "Retraining",
+        "Recommended" if selected_run["retraining_recommended"] else "Not required",
     )
-    accuracy[4].metric("Retraining", "Recommended" if selected_run["retraining_recommended"] else "Not required")
+    st.caption(
+        "Holdout metrics measure model-selection performance. Realized daily monitoring "
+        "is evaluated only after actual demand becomes available."
+    )
 
     st.markdown('<div class="section-title">Daily optimized plan</div>', unsafe_allow_html=True)
     dates = sorted(summary["forecast_date"].unique())

@@ -226,6 +226,11 @@ def evaluate_latest_forecast(conn, run_date: date) -> tuple[ForecastMetrics | No
     conn.rollback()
     if not forecast_totals or not any(forecast_totals):
         return None, int(previous_failures)
+    # The daily forecast runs shortly after midnight, before the new day's demand
+    # may exist. Absence of actuals is not a zero-demand observation and must not
+    # be converted into an extreme monitoring error.
+    if actual_total is None or float(actual_total) <= 0:
+        return None, int(previous_failures)
     metrics = calculate_aggregate_metrics(
         actual_total=float(actual_total),
         predicted_total=float(forecast_totals[1]),
