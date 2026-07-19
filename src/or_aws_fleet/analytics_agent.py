@@ -140,8 +140,8 @@ def record_actual_usage(input_tokens: int, output_tokens: int, today: date | Non
         return
     usage_date = today or _business_date()
     actual_cost = (
-        input_tokens * float(os.getenv("AGENT_INPUT_TOKEN_COST_USD", "0.00000025"))
-        + output_tokens * float(os.getenv("AGENT_OUTPUT_TOKEN_COST_USD", "0.00000125"))
+        input_tokens * float(os.getenv("AGENT_INPUT_TOKEN_COST_USD", "0.00000006"))
+        + output_tokens * float(os.getenv("AGENT_OUTPUT_TOKEN_COST_USD", "0.00000024"))
     )
     adjustment = Decimal(str(actual_cost - reservation_usd()))
     conn = _connect()
@@ -289,7 +289,7 @@ def run_analytics_agent(question: str, conversation_context: str = "") -> str:
     llm = LLM(
         model=os.getenv(
             "AGENT_BEDROCK_MODEL_ID",
-            "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+            "bedrock/amazon.nova-lite-v1:0",
         ),
         region_name=os.getenv("AGENT_BEDROCK_REGION", "us-east-1"),
         temperature=0.1,

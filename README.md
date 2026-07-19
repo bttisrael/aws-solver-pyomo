@@ -183,7 +183,7 @@ Internet-facing Application Load Balancer
       -> macro and detailed optimization results
       -> daily_programming browser and CSV export
       -> CrewAI data analyst grounded in curated Aurora DSQL queries
-          -> Claude 3 Haiku through Amazon Bedrock
+          -> Amazon Nova Lite through Amazon Bedrock
           -> $0.50 server-side daily usage budget
   -> FastAPI + Pyomo in the same ECS/Fargate task
       -> Aurora DSQL daily_programming input
@@ -244,8 +244,8 @@ The dashboard provides six operator screens:
    load, occupancy, and freight metrics from the latest actual optimization.
 5. **Daily Programming** displays the selected input date with origin and
    destination filters, totals, and CSV export.
-6. **AI Data Analyst** provides a conversational CrewAI agent backed by Claude
-   3 Haiku on Amazon Bedrock. The agent can inspect curated, row-limited demand,
+6. **AI Data Analyst** provides a conversational CrewAI agent backed by Amazon
+   Nova Lite on Amazon Bedrock. The agent can inspect curated, row-limited demand,
    route, vehicle, forecast, and optimization summaries from Aurora DSQL. It
    cannot execute arbitrary SQL or write to the database. A server-side daily
    usage ledger reserves budget before each request and enforces a $0.50 cap.
