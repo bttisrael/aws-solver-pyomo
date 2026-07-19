@@ -61,3 +61,37 @@ def test_usage_metric_aliases_are_supported():
 
     assert analytics_agent._usage_value(Metrics(), "prompt_tokens", "input_tokens") == 123
     assert analytics_agent._usage_value(Metrics(), "completion_tokens", "output_tokens") == 45
+
+
+def test_chart_definition_is_built_only_from_approved_fields(monkeypatch):
+    monkeypatch.setattr(
+        analytics_agent,
+        "query_project_data",
+        lambda dataset, programming_date="": json.dumps(
+            [{"forecast_date": "2026-07-20", "p50_units": 1250}]
+        ),
+    )
+
+    chart = analytics_agent.build_project_chart(
+        "forecast", "line", "forecast_date", "p50_units", "21-day demand forecast"
+    )
+
+    assert chart.dataset == "forecast"
+    assert chart.chart_type == "line"
+    assert chart.data[0]["p50_units"] == 1250
+
+    with pytest.raises(ValueError, match="Unsupported numeric y field"):
+        analytics_agent.build_project_chart(
+            "forecast", "bar", "forecast_date", "secret_column", "Unsafe chart"
+        )
+
+
+def test_chart_definition_rejects_catalog_and_empty_results(monkeypatch):
+    with pytest.raises(ValueError, match="approved analytical datasets"):
+        analytics_agent.build_project_chart("catalog", "bar", "dataset", "rows", "Catalog")
+
+    monkeypatch.setattr(analytics_agent, "query_project_data", lambda *args: "[]")
+    with pytest.raises(ValueError, match="No data"):
+        analytics_agent.build_project_chart(
+            "vehicles", "bar", "vehicle_type", "vehicle_capacity_kg", "Capacity"
+        )
