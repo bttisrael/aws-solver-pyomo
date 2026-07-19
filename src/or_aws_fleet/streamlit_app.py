@@ -8,7 +8,12 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from or_aws_fleet.analytics_agent import daily_budget_usd, get_daily_usage, run_analytics_agent
+from or_aws_fleet.analytics_agent import (
+    AgentChart,
+    daily_budget_usd,
+    get_daily_usage,
+    run_analytics_agent_response,
+)
 from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve
 from or_aws_fleet.dashboard_data import (
     available_programming_dates,
@@ -1052,6 +1057,29 @@ def forecast_optimized_screen() -> None:
     )
 
 
+def render_agent_chart(chart: AgentChart) -> None:
+    """Render a model-requested chart from an already validated chart definition."""
+    frame = pd.DataFrame(chart.data)
+    frame[chart.y] = pd.to_numeric(frame[chart.y], errors="coerce")
+    x_type = "T" if "date" in chart.x else ("Q" if chart.x in frame.select_dtypes("number") else "N")
+    encoding = {
+        "x": alt.X(f"{chart.x}:{x_type}", title=chart.x.replace("_", " ").title()),
+        "y": alt.Y(f"{chart.y}:Q", title=chart.y.replace("_", " ").title()),
+        "tooltip": [alt.Tooltip(column) for column in frame.columns],
+    }
+    if chart.color:
+        encoding["color"] = alt.Color(f"{chart.color}:N", title=chart.color.replace("_", " ").title())
+    base = alt.Chart(frame).encode(**encoding).properties(title=chart.title, height=330)
+    if chart.chart_type == "line":
+        visual = base.mark_line(point=True, strokeWidth=3)
+    elif chart.chart_type == "scatter":
+        visual = base.mark_circle(size=100, opacity=0.85)
+    else:
+        visual = base.mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+    st.altair_chart(visual, use_container_width=True)
+    st.caption(f"Source: curated `{chart.dataset}` dataset · maximum 50 rows")
+
+
 def analytics_agent_screen() -> None:
     page_title("AI Data Analyst", "actual")
     st.caption(
@@ -1069,8 +1097,8 @@ def analytics_agent_screen() -> None:
     metric_columns[3].metric("Questions today", f"{usage.request_count:,}")
     st.progress(min(1.0, usage.estimated_cost_usd / budget if budget else 1.0))
     st.caption(
-        "Powered by CrewAI and Claude 3 Haiku on Amazon Bedrock. Quantitative answers must be "
-        "grounded in a curated database tool; arbitrary SQL and database writes are disabled."
+        "Powered by CrewAI and Amazon Nova Lite on Amazon Bedrock. Answers and charts must be "
+        "grounded in curated database tools; arbitrary SQL, generated HTML, and writes are disabled."
     )
 
     if "analytics_messages" not in st.session_state:
@@ -1087,6 +1115,8 @@ def analytics_agent_screen() -> None:
     for message in st.session_state.analytics_messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            for chart in message.get("charts", []):
+                render_agent_chart(chart)
 
     question = st.chat_input(
         "Example: Which routes have the highest freight cost in the latest optimization?",
@@ -1104,14 +1134,21 @@ def analytics_agent_screen() -> None:
         with st.chat_message("assistant"):
             with st.spinner("Consulting the project data and preparing a grounded answer..."):
                 try:
-                    answer = run_analytics_agent(question, context)
+                    response = run_analytics_agent_response(question, context)
+                    answer = response.answer
+                    charts = response.charts
                 except Exception:
                     answer = (
                         "I could not complete this analysis. The model or database service may "
                         "be temporarily unavailable. Please try again in a moment."
                     )
+                    charts = []
                 st.markdown(answer)
-        st.session_state.analytics_messages.append({"role": "assistant", "content": answer})
+                for chart in charts:
+                    render_agent_chart(chart)
+        st.session_state.analytics_messages.append(
+            {"role": "assistant", "content": answer, "charts": charts}
+        )
 
 
 st.sidebar.markdown(

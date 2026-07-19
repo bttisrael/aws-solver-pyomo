@@ -247,8 +247,10 @@ The dashboard provides six operator screens:
 6. **AI Data Analyst** provides a conversational CrewAI agent backed by Amazon
    Nova Lite on Amazon Bedrock. The agent can inspect curated, row-limited demand,
    route, vehicle, forecast, and optimization summaries from Aurora DSQL. It
-   cannot execute arbitrary SQL or write to the database. A server-side daily
-   usage ledger reserves budget before each request and enforces a $0.50 cap.
+   can also request validated bar, line, and scatter charts that Streamlit renders
+   with trusted Altair components. It cannot generate executable HTML, execute
+   arbitrary SQL, or write to the database. A server-side daily usage ledger
+   reserves budget before each request and enforces a $0.50 cap.
 
 Local execution requires the DSQL variables in the current PowerShell session:
 
