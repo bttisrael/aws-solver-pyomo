@@ -932,7 +932,9 @@ def get_forecast_comparison(run_id: str, run_date):
 
 def forecast_optimized_screen() -> None:
     page_title("Forecast Optimization", "forecast")
-    st.caption("Rolling 21-day demand forecast with P50 expected and P90 capacity plans.")
+    st.caption(
+        "Rolling 21-day machine-learning forecast with P50 expected and P90 capacity plans."
+    )
     run = get_latest_forecast()
     if run.empty:
         st.info("The first scheduled forecast has not completed yet.")
@@ -997,8 +999,8 @@ def forecast_optimized_screen() -> None:
         st.altair_chart(chart, use_container_width=True)
         st.caption(
             "The forecast-model P50 curve is compared with an eight-week same-weekday "
-            "moving-average baseline. The current champion is seasonal-naive-v1; an AutoML "
-            "challenger should replace it only after outperforming this baseline."
+            "moving-average baseline. The model shown above is the persisted AutoML champion "
+            "selected by recursive holdout WAPE; retraining is performance-gated."
         )
 
     st.markdown('<div class="section-title">Forecast accuracy and governance</div>', unsafe_allow_html=True)

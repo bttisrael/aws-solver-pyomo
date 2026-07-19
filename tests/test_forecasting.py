@@ -4,6 +4,7 @@ import pandas as pd
 
 from or_aws_fleet.forecasting import (
     ForecastMetrics,
+    automl_forecast,
     calculate_aggregate_metrics,
     calculate_metrics,
     retraining_decision,
@@ -40,6 +41,28 @@ def test_seasonal_forecast_has_exactly_21_future_dates_and_quantiles() -> None:
     assert result["forecast_date"].max() == run_date + timedelta(days=21)
     assert (result["p10_units"] <= result["p50_units"]).all()
     assert (result["p50_units"] <= result["p90_units"]).all()
+
+
+def test_automl_trains_real_champion_and_forecasts_21_days() -> None:
+    run_date = date(2026, 5, 20)
+    result = automl_forecast(history_frame(), run_date)
+    forecast = result.forecast
+    assert result.model_version.startswith("automl-")
+    assert result.champion.trained_on == run_date
+    assert forecast["forecast_date"].nunique() == 21
+    assert set(forecast["model_version"]) == {result.model_version}
+    assert (forecast["p10_units"] <= forecast["p50_units"]).all()
+    assert (forecast["p50_units"] <= forecast["p90_units"]).all()
+
+
+def test_automl_reuses_persisted_champion_without_retraining() -> None:
+    run_date = date(2026, 5, 20)
+    first = automl_forecast(history_frame(), run_date)
+    second = automl_forecast(
+        history_frame(), run_date + timedelta(days=1), champion=first.champion
+    )
+    assert second.champion is first.champion
+    assert second.model_version == first.model_version
 
 
 def test_metrics_and_retraining_require_three_failures_and_cooldown() -> None:

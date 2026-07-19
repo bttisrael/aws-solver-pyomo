@@ -87,6 +87,7 @@ class OrFleetStack(Stack):
                 "DSQL_CLUSTER_IDENTIFIER": dsql_cluster_identifier,
                 "DSQL_DATABASE": "postgres",
                 "DSQL_DB_USER": "admin",
+                "MODEL_BUCKET": bucket.bucket_name,
             },
         )
         container.add_port_mappings(ecs.PortMapping(container_port=8080))
@@ -110,6 +111,7 @@ class OrFleetStack(Stack):
                 "DSQL_CLUSTER_IDENTIFIER": dsql_cluster_identifier,
                 "DSQL_DATABASE": "postgres",
                 "DSQL_DB_USER": "admin",
+                "MODEL_BUCKET": bucket.bucket_name,
             },
         )
         dashboard.add_port_mappings(ecs.PortMapping(container_port=8501))
@@ -120,6 +122,7 @@ class OrFleetStack(Stack):
         forecast_task = ecs.FargateTaskDefinition(
             self, "DailyForecastTaskDefinition", cpu=2048, memory_limit_mib=4096
         )
+        bucket.grant_read_write(forecast_task.task_role)
         forecast_task.add_container(
             "forecast",
             image=ecs.ContainerImage.from_ecr_repository(image_repository, image_tag),
@@ -130,9 +133,10 @@ class OrFleetStack(Stack):
                 "DSQL_CLUSTER_IDENTIFIER": dsql_cluster_identifier,
                 "DSQL_DATABASE": "postgres",
                 "DSQL_DB_USER": "admin",
-                # A forecast is produced daily. AutoML training remains gated until
-                # monitoring records three consecutive failures and the cost switch is enabled.
-                "ENABLE_AUTOML_RETRAINING": "false",
+                "MODEL_BUCKET": bucket.bucket_name,
+                # Forecasting runs daily; training runs initially and then only
+                # after three consecutive monitoring failures and a seven-day cooldown.
+                "ENABLE_AUTOML_RETRAINING": "true",
             },
         )
         forecast_task.task_role.add_to_policy(

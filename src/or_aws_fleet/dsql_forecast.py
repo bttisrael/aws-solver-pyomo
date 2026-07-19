@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import math
 import os
 import uuid
@@ -10,14 +11,18 @@ from decimal import Decimal
 from typing import Callable
 
 import pandas as pd
+import boto3
+import joblib
+from botocore.exceptions import ClientError
 
 from or_aws_fleet.dsql_optimizer import DatabaseSettings, execute_multirow_insert, load_vehicle_types
 from or_aws_fleet.forecasting import (
+    AutoMLChampion,
     FORECAST_HORIZON_DAYS,
     ForecastMetrics,
     calculate_aggregate_metrics,
     retraining_decision,
-    seasonal_naive_forecast,
+    automl_forecast,
 )
 from or_aws_fleet.programming_model import ProgrammingLine, VehicleType, solve_route
 
@@ -68,7 +73,16 @@ DDL = (
         pallets NUMERIC(16,6) NOT NULL, weight_kg NUMERIC(16,3) NOT NULL,
         PRIMARY KEY (run_id, forecast_date, scenario, demand_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS logistics.forecast_model_registry (
+        model_version VARCHAR(120) PRIMARY KEY, trained_at TIMESTAMP NOT NULL,
+        training_end_date DATE NOT NULL, algorithm VARCHAR(80) NOT NULL,
+        validation_wape NUMERIC(10,6) NOT NULL,
+        baseline_wape NUMERIC(10,6) NOT NULL, artifact_uri VARCHAR(500) NOT NULL,
+        champion BOOLEAN NOT NULL
+    )""",
 )
+
+MODEL_CHAMPION_KEY = "forecast-models/champion.joblib"
 
 
 def ensure_forecast_tables(conn) -> None:
@@ -88,14 +102,19 @@ def insert_committed_batches(conn, prefix: str, rows: list[tuple], columns: int,
         cursor.close()
 
 
-def load_history(conn, run_date: date, lookback_days: int = 180) -> pd.DataFrame:
+def load_history(conn, run_date: date, lookback_days: int = 365) -> pd.DataFrame:
     cursor = conn.cursor()
     cursor.execute(
-        """SELECT date, origin, destiny, cod_material, units, qty_by_box,
-                  qty_by_pallet, material_weight, google_driving_distance_km
-           FROM logistics.daily_programming
-           WHERE date >= %s AND date <= %s
-           ORDER BY date, origin, destiny, cod_material""",
+        """SELECT demand.date, demand.origin, demand.destiny, demand.cod_material,
+                  demand.units, master.qty_by_box, master.qty_by_pallet,
+                  master.material_weight, route.google_driving_distance_km
+           FROM logistics.daily_demand AS demand
+           JOIN logistics.master_data AS master
+             ON master.cod_material = demand.cod_material
+           JOIN logistics.route AS route
+             ON route.origin = demand.origin AND route.destiny = demand.destiny
+           WHERE demand.date >= %s AND demand.date <= %s
+           ORDER BY demand.date, demand.origin, demand.destiny, demand.cod_material""",
         (run_date - timedelta(days=lookback_days), run_date),
     )
     columns = [column[0] for column in cursor.description]
@@ -103,6 +122,60 @@ def load_history(conn, run_date: date, lookback_days: int = 180) -> pd.DataFrame
     cursor.close()
     conn.rollback()
     return frame
+
+
+def load_champion() -> AutoMLChampion | None:
+    bucket = os.getenv("MODEL_BUCKET", "").strip()
+    if not bucket:
+        return None
+    try:
+        payload = boto3.client("s3").get_object(Bucket=bucket, Key=MODEL_CHAMPION_KEY)["Body"].read()
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
+            return None
+        raise
+    champion = joblib.load(io.BytesIO(payload))
+    if not isinstance(champion, AutoMLChampion):
+        raise TypeError("The persisted forecast champion has an unexpected type.")
+    return champion
+
+
+def save_champion(champion: AutoMLChampion) -> str:
+    bucket = os.environ["MODEL_BUCKET"]
+    buffer = io.BytesIO()
+    joblib.dump(champion, buffer)
+    payload = buffer.getvalue()
+    versioned_key = f"forecast-models/{champion.model_version}.joblib"
+    client = boto3.client("s3")
+    client.put_object(Bucket=bucket, Key=versioned_key, Body=payload)
+    client.put_object(Bucket=bucket, Key=MODEL_CHAMPION_KEY, Body=payload)
+    return f"s3://{bucket}/{versioned_key}"
+
+
+def register_champion(conn, champion: AutoMLChampion, artifact_uri: str) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE logistics.forecast_model_registry SET champion = %s WHERE champion = %s",
+        (False, True),
+    )
+    cursor.execute(
+        """INSERT INTO logistics.forecast_model_registry (
+               model_version, trained_at, training_end_date, algorithm,
+               validation_wape, baseline_wape, artifact_uri, champion
+           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            champion.model_version,
+            datetime.now(timezone.utc).replace(tzinfo=None),
+            champion.trained_on,
+            champion.model_version.removeprefix("automl-").rsplit("-", 1)[0],
+            champion.validation_wape,
+            champion.baseline_wape,
+            artifact_uri,
+            True,
+        ),
+    )
+    conn.commit()
+    cursor.close()
 
 
 def evaluate_latest_forecast(conn, run_date: date) -> tuple[ForecastMetrics | None, int]:
@@ -240,15 +313,34 @@ def run_daily_forecast(
             ].max().items()
         }
         metrics, consecutive_failures = evaluate_latest_forecast(conn, run_date)
+        champion = load_champion()
+        days_since_training = (
+            (run_date - champion.trained_on).days if champion is not None else 999
+        )
         decision = (
-            retraining_decision(metrics, consecutive_failures, days_since_training=999)
+            retraining_decision(metrics, consecutive_failures, days_since_training)
             if metrics else None
         )
-        forecast = seasonal_naive_forecast(history, run_date, FORECAST_HORIZON_DAYS)
+        retraining_enabled = os.getenv("ENABLE_AUTOML_RETRAINING", "true").lower() == "true"
+        train_champion = champion is None or bool(
+            retraining_enabled and decision and decision.should_retrain
+        )
+        result = automl_forecast(
+            history,
+            run_date,
+            FORECAST_HORIZON_DAYS,
+            champion=None if train_champion else champion,
+        )
+        champion = result.champion
+        if train_champion:
+            artifact_uri = save_champion(champion)
+            register_champion(conn, champion, artifact_uri)
+        forecast = result.forecast
         if forecast.empty:
             raise RuntimeError("The forecast pipeline produced no rows.")
         if progress_callback:
-            progress_callback(50, "Generated the 21-day demand forecast")
+            action = "trained" if train_champion else "loaded"
+            progress_callback(50, f"Generated the 21-day ML forecast ({action} champion)")
         run_id = str(uuid.uuid4())
         cursor = conn.cursor()
         cursor.execute(
@@ -257,7 +349,7 @@ def run_daily_forecast(
                    wape, mase, bias, interval_coverage, consecutive_failures,
                    retraining_recommended, retraining_reasons
                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (run_id, run_date, datetime.now(timezone.utc).replace(tzinfo=None), "seasonal-naive-v1",
+            (run_id, run_date, datetime.now(timezone.utc).replace(tzinfo=None), result.model_version,
              FORECAST_HORIZON_DAYS, "RUNNING", metrics.wape if metrics else None,
              metrics.mase if metrics else None, metrics.bias if metrics else None,
              metrics.interval_coverage if metrics else None, consecutive_failures,
