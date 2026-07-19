@@ -182,6 +182,9 @@ Internet-facing Application Load Balancer
       -> editable solver configuration and simulation
       -> macro and detailed optimization results
       -> daily_programming browser and CSV export
+      -> CrewAI data analyst grounded in curated Aurora DSQL queries
+          -> Claude 3 Haiku through Amazon Bedrock
+          -> $0.50 server-side daily usage budget
   -> FastAPI + Pyomo in the same ECS/Fargate task
       -> Aurora DSQL daily_programming input
       -> Pyomo + HiGHS route optimization
@@ -224,7 +227,7 @@ The interface uses a dark logistics control-center theme across every screen,
 with cyan operational KPIs, compact fleet panels, dark data grids, and a
 color-coded route map optimized for desktop demonstrations.
 
-The dashboard provides five operator screens:
+The dashboard provides six operator screens:
 
 1. **Solver Configuration** selects the programming date and displays every
    vehicle type in an editable table. Users can enable vehicle types, change
@@ -241,6 +244,11 @@ The dashboard provides five operator screens:
    load, occupancy, and freight metrics from the latest actual optimization.
 5. **Daily Programming** displays the selected input date with origin and
    destination filters, totals, and CSV export.
+6. **AI Data Analyst** provides a conversational CrewAI agent backed by Claude
+   3 Haiku on Amazon Bedrock. The agent can inspect curated, row-limited demand,
+   route, vehicle, forecast, and optimization summaries from Aurora DSQL. It
+   cannot execute arbitrary SQL or write to the database. A server-side daily
+   usage ledger reserves budget before each request and enforces a $0.50 cap.
 
 Local execution requires the DSQL variables in the current PowerShell session:
 
@@ -251,7 +259,9 @@ streamlit run src\or_aws_fleet\streamlit_app.py
 
 In AWS, the same immutable image runs as two containers in one Fargate task:
 FastAPI listens on port 8080 and Streamlit listens on port 8501. Both use the
-   task IAM role for short-lived Aurora DSQL authentication. The public load
+task IAM role for short-lived Aurora DSQL authentication; the dashboard also
+uses that role for Bedrock inference, so no long-lived LLM API key is stored.
+The public load
 balancer routes users to Streamlit and checks `/_stcore/health`.
 
 ### Remote image build with CodeBuild

@@ -112,11 +112,24 @@ class OrFleetStack(Stack):
                 "DSQL_DATABASE": "postgres",
                 "DSQL_DB_USER": "admin",
                 "MODEL_BUCKET": bucket.bucket_name,
+                "AGENT_BEDROCK_REGION": "us-east-1",
+                "AGENT_BEDROCK_MODEL_ID": "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+                "AGENT_DAILY_BUDGET_USD": "0.50",
+                "CREWAI_DISABLE_TELEMETRY": "true",
             },
         )
         dashboard.add_port_mappings(ecs.PortMapping(container_port=8501))
         task_definition.task_role.add_to_policy(
             iam.PolicyStatement(actions=["dsql:GetCluster", "dsql:DbConnectAdmin"], resources=["*"])
+        )
+        task_definition.task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                resources=[
+                    "arn:aws:bedrock:us-east-1::foundation-model/"
+                    "anthropic.claude-3-haiku-20240307-v1:0"
+                ],
+            )
         )
 
         forecast_task = ecs.FargateTaskDefinition(
