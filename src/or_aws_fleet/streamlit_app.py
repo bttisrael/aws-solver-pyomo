@@ -886,20 +886,6 @@ def route_network_screen() -> None:
         st.caption(
             "Colors identify factory route groups. Cyan markers represent distribution centers."
         )
-        st.markdown(
-            '<div class="section-title">All route performance</div>',
-            unsafe_allow_html=True,
-        )
-        st.dataframe(
-            route_table,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Avg. occupancy (%)": st.column_config.ProgressColumn(
-                    format="%.0f%%", min_value=0, max_value=100
-                )
-            },
-        )
 
     with route_detail:
         st.markdown(
@@ -918,6 +904,22 @@ def route_network_screen() -> None:
         st.metric("Loaded weight", f"{float(selected['load_weight_kg']):,.0f} kg")
         st.metric("Efficiency", f"{float(selected['average_occupancy']):.0%}")
         st.metric("Freight cost", f"{float(selected['freight_cost']):,.0f}")
+
+    st.markdown(
+        '<div class="section-title">All route performance</div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        route_table,
+        hide_index=True,
+        use_container_width=True,
+        height=520,
+        column_config={
+            "Avg. occupancy (%)": st.column_config.ProgressColumn(
+                format="%.0f%%", min_value=0, max_value=100
+            )
+        },
+    )
 
 
 @st.cache_data(ttl=60, show_spinner=False)
