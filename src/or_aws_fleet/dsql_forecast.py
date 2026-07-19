@@ -83,6 +83,14 @@ DDL = (
 )
 
 MODEL_CHAMPION_KEY = "forecast-models/champion.joblib"
+METRIC_STORAGE_LIMIT = 9_999.999999
+
+
+def metric_for_storage(value: float | None) -> float | None:
+    """Bound monitoring values to the existing NUMERIC(10,6) DSQL columns."""
+    if value is None:
+        return None
+    return max(-METRIC_STORAGE_LIMIT, min(float(value), METRIC_STORAGE_LIMIT))
 
 
 def ensure_forecast_tables(conn) -> None:
@@ -350,9 +358,11 @@ def run_daily_forecast(
                    retraining_recommended, retraining_reasons
                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (run_id, run_date, datetime.now(timezone.utc).replace(tzinfo=None), result.model_version,
-             FORECAST_HORIZON_DAYS, "RUNNING", metrics.wape if metrics else None,
-             metrics.mase if metrics else None, metrics.bias if metrics else None,
-             metrics.interval_coverage if metrics else None, consecutive_failures,
+             FORECAST_HORIZON_DAYS, "RUNNING",
+             metric_for_storage(metrics.wape if metrics else None),
+             metric_for_storage(metrics.mase if metrics else None),
+             metric_for_storage(metrics.bias if metrics else None),
+             metric_for_storage(metrics.interval_coverage if metrics else None), consecutive_failures,
              decision.should_retrain if decision else False,
              json.dumps(decision.reasons if decision else ())),
         )

@@ -10,7 +10,7 @@ from or_aws_fleet.forecasting import (
     retraining_decision,
     seasonal_naive_forecast,
 )
-from or_aws_fleet.dsql_forecast import _optimize
+from or_aws_fleet.dsql_forecast import _optimize, metric_for_storage
 from or_aws_fleet.programming_model import ProgrammingLine, RouteSolution, VehicleType
 
 
@@ -63,6 +63,13 @@ def test_automl_reuses_persisted_champion_without_retraining() -> None:
     )
     assert second.champion is first.champion
     assert second.model_version == first.model_version
+
+
+def test_monitoring_metrics_are_bounded_for_dsql_numeric_columns() -> None:
+    assert metric_for_storage(None) is None
+    assert metric_for_storage(42.0) == 42.0
+    assert metric_for_storage(100_000.0) == 9_999.999999
+    assert metric_for_storage(-100_000.0) == -9_999.999999
 
 
 def test_metrics_and_retraining_require_three_failures_and_cooldown() -> None:
