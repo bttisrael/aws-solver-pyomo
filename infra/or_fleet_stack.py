@@ -113,7 +113,7 @@ class OrFleetStack(Stack):
                 "DSQL_DB_USER": "admin",
                 "MODEL_BUCKET": bucket.bucket_name,
                 "AGENT_BEDROCK_REGION": "us-east-1",
-                "AGENT_BEDROCK_MODEL_ID": "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+                "AGENT_BEDROCK_MODEL_ID": "bedrock/amazon.nova-lite-v1:0",
                 "AGENT_DAILY_BUDGET_USD": "0.50",
                 "CREWAI_DISABLE_TELEMETRY": "true",
             },
@@ -127,7 +127,7 @@ class OrFleetStack(Stack):
                 actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
                 resources=[
                     "arn:aws:bedrock:us-east-1::foundation-model/"
-                    "anthropic.claude-3-haiku-20240307-v1:0"
+                    "amazon.nova-lite-v1:0"
                 ],
             )
         )
