@@ -1,59 +1,101 @@
-# OR Production AWS
+# Beverage Forecasting & Fleet Optimization
 
-Production-style demand forecasting and operational research pipeline for fleet
-sizing on AWS. It combines a rolling 21-day probabilistic forecast with Pyomo
-vehicle minimization and a public, continuously available Streamlit portfolio dashboard.
+A public, production-style MLOps and operations-research platform for synthetic
+beverage logistics. The system generates daily demand, forecasts the next 21
+days with a governed AutoML champion, and uses Pyomo + HiGHS to select a
+cost-aware mixed fleet for 45 factory-to-distribution-center routes.
 
-## Architecture
+[Open the live platform](http://orflee-optim-5z8y1eu8xjzt-747546465.us-east-2.elb.amazonaws.com/)
+
+> Portfolio note: all demand, products, locations, and operating results are
+> synthetic. No commercial beverage brands or confidential operational data are
+> used.
+
+## What the platform demonstrates
+
+- A continuously available Streamlit control center on Amazon ECS/Fargate.
+- Five synthetic factories, nine distribution centers, 45 routes, and seven
+  configurable vehicle types.
+- Daily seasonal demand generation and an enriched `daily_programming` input.
+- A recursive 21-day machine-learning forecast with P10/P50/P90 scenarios.
+- AutoML challenger selection, model artifacts in S3, registry metadata in
+  Aurora DSQL, validation gates, and performance-triggered retraining.
+- Multi-vehicle Pyomo optimization across weight, volume, pallet capacity,
+  driving distance, and freight cost.
+- A read-only CrewAI data analyst using Amazon Nova Lite through Amazon Bedrock,
+  including validated charts and a server-side USD 0.50 daily budget.
+- Infrastructure as code, remote container builds, short-lived GitHub OIDC
+  credentials, automated tests, deployment health checks, and rollback.
+
+## Application screens
+
+| Screen | Purpose |
+|---|---|
+| **Solver Configuration** | Edit all vehicle capacities and costs, choose the programming date, tune objective weights, and run both actual and forecast optimization. |
+| **Actual Optimization** | Inspect one of the five latest runs, macro KPIs, route/vehicle assignments, and the BASE/TOP operational load plan. |
+| **Forecast Optimization** | Compare the AutoML P50 forecast with an eight-week same-weekday baseline, review holdout metrics, and inspect P50/P90 optimized plans for D+1 through D+21. |
+| **Route Network** | Explore all routes on a map with Google driving distance, utilization, freight cost, projected 21-day cost, and theoretical capacity opportunity. |
+| **Daily Programming** | Filter the selected demand snapshot by factory and distribution center and export it as CSV. |
+| **AI Data Analyst** | Ask grounded questions about curated demand, routes, vehicles, forecasts, and optimization results, and request safe bar, line, or scatter charts. |
+
+## AWS architecture
 
 ```text
-Amazon EventBridge Scheduler
-  +-- daily 00:00 America/Sao_Paulo: synthetic demand and daily programming
-  +-- daily 00:15 America/Sao_Paulo: 21-day forecast and optimization
-      |
-      +-- Amazon ECS Fargate task
-          |
-          +-- persisted AutoML champion forecast (P10/P50/P90)
-          +-- solve P50 and P90 Pyomo fleet-sizing plans for D+1..D+21
-          +-- persist forecasts, vehicle assignments, and load plans in Aurora DSQL
+EventBridge Scheduler
+  00:00 America/Sao_Paulo
+    -> Lambda demand generator
+       -> logistics.daily_demand
+       -> logistics.daily_programming
 
-Amazon CloudWatch Logs
-  +-- container logs and run summary
+  00:15 America/Sao_Paulo
+    -> one-off ECS/Fargate forecast task
+       -> load or train AutoML champion
+       -> persist model artifact in private S3
+       -> generate P10/P50/P90 for D+1..D+21
+       -> optimize P50 and P90 plans with Pyomo + HiGHS
+       -> persist forecasts and load plans in Aurora DSQL
 
-Amazon Aurora DSQL
-  +-- daily_programming and optimization results
-  +-- demand_forecast and forecast optimization results
+Internet -> public Application Load Balancer
+  -> continuously running ECS/Fargate service
+     -> Streamlit dashboard (public target, port 8501)
+     -> FastAPI + Pyomo container (not exposed by the ALB, port 8080)
+     -> Aurora DSQL using task-role authentication
+     -> Bedrock Nova Lite using task-role authentication
+
+GitHub pull request -> Ruff + pytest + Docker build + CDK synth
+  -> merge to main -> protected production environment
+  -> GitHub OIDC -> CodeBuild -> private ECR
+  -> CDK deploy -> ECS health check or automatic rollback
+
+CloudWatch Logs <- Lambda, CodeBuild, forecast task, API, and dashboard
 ```
 
-## Forecasting and model governance
+The public service keeps exactly one Fargate task online. ECS replaces an
+unhealthy task automatically, and Application Load Balancer cookie stickiness
+keeps Streamlit WebSocket and lazy-loaded assets on the same task during rolling
+deployments.
 
-The production forecast is refreshed every day but the model is not retrained
-every day. On the first run, the training pipeline evaluates histogram gradient
-boosting, random forest, and extremely randomized trees on a recursive 21-day
-time holdout. The lowest-WAPE candidate is refit on the full one-year history,
-versioned in `forecast_model_registry`, and persisted in the private artifacts
-S3 bucket. Daily runs load that champion to predict the next 21 business totals.
-The same-weekday route/SKU profile disaggregates those ML totals to active demand
-series, while validation residuals produce calibrated P10/P50/P90 scenarios.
-P50 drives the expected plan; P90 provides a conservative capacity plan.
+## Data model
 
-Demand generation uses persistent intermittent route-SKU series rather than a
-new random product mix every day. Stable base velocities are combined with
-calendar seasonality, annual growth, correlated market cycles, route and SKU
-cycles, multi-day promotions, occasional stockouts, heavy-tailed order noise,
-and rare market-wide shocks. This creates learnable structure while retaining
-realistic residual uncertainty for AutoML challenger evaluation.
+Core inputs:
 
-AutoML retraining is triggered only after three consecutive failed monitoring
-evaluations and at least seven days since the previous training job. The gates
-are WAPE above 20%, MASE above 1.0, absolute bias above 7%, or prediction interval
-coverage outside 70%-90%. The persisted champion remains available between
-training jobs, so daily forecast generation does not incur daily training cost.
-The seasonal weekday forecast remains the validation benchmark and supplies the
-route/SKU allocation profile; the persisted AutoML champion produces the daily
-business totals used by the production forecast.
+```text
+logistics.vehicle_master_data
+logistics.route
+logistics.daily_demand
+logistics.daily_programming
+```
 
-Forecast tables:
+Actual optimization outputs:
+
+```text
+logistics.optimization_runs
+logistics.optimization_vehicle_assignments
+logistics.optimization_line_assignments
+logistics.optimization_load_plan
+```
+
+Forecasting and forecast-optimization outputs:
 
 ```text
 logistics.forecast_runs
@@ -64,422 +106,163 @@ logistics.forecast_load_plan
 logistics.forecast_model_registry
 ```
 
-## Optimization Problem
+Agent governance:
 
-The model is a daily fleet-sizing assignment problem.
+```text
+logistics.agent_daily_usage
+```
 
-Decision variables:
+`daily_programming` enriches demand with product weight, boxes, pallets, cubic
+volume, and Google driving distance. A pallet requirement is calculated as:
 
-- `x[c, v]`: 1 if customer demand point `c` is assigned to vehicle `v`.
-- `y[v]`: 1 if vehicle `v` is used.
+```text
+units / (qty_by_box * qty_by_pallet)
+```
 
-Objective:
+## Forecasting and MLOps
 
-- Minimize `sum(y[v])`, the number of vehicles used.
+The first training run evaluates histogram gradient boosting, random forest,
+and extremely randomized trees using leakage-free lag, rolling, calendar, and
+seasonality features. Candidate models are compared on a recursive 21-day time
+holdout. The lowest-WAPE model is refit on all available history and persisted
+as the champion.
 
-Constraints:
+Daily inference loads the champion rather than retraining it. The model predicts
+daily business totals, while the recent same-weekday route/SKU profile allocates
+those totals to active logistics series. Validation residuals calibrate the
+P10/P50/P90 uncertainty scenarios.
 
-- Every demand point is assigned to exactly one vehicle.
-- Total demand assigned to a vehicle cannot exceed vehicle capacity.
-- A demand point can only be assigned to an active vehicle.
-- Vehicle activation is ordered to reduce symmetry and speed up the solve.
+Monitoring evaluates WAPE, MASE, bias, and interval coverage. Retraining is
+eligible only after three consecutive failed evaluations and a seven-day
+cooldown. Current gates are:
 
-The Docker image installs `highspy`, so Pyomo uses HiGHS in the AWS task. If no
-MILP solver is available in a local environment, the application falls back to a
-first-fit decreasing heuristic and marks the solution as heuristic.
+| Metric | Retraining gate |
+|---|---|
+| WAPE | greater than 20% |
+| MASE | greater than 1.0 |
+| Absolute bias | greater than 7% |
+| P10-P90 coverage | outside 70%-90% |
 
-## Local Run
+The dashboard reports model-selection metrics from the recursive holdout; it
+does not present unknown future 21-day actuals as realized accuracy.
+
+## Optimization model
+
+Demand is partitioned by origin/destination route. For every route, Pyomo
+assigns each programming line to one enabled vehicle candidate and activates
+only the vehicles required to carry it.
+
+The weighted objective is:
+
+```text
+minimize(
+    vehicle_count_weight * active_vehicle_count
+    + freight_cost_weight
+      * sum(route_distance_km * vehicle_freight_cost_per_km)
+)
+```
+
+Constraints enforce:
+
+- exactly one vehicle assignment per demand line;
+- weight, pallet, and cubic-volume capacity for each vehicle type;
+- assignment only to an activated vehicle;
+- ordered activation to reduce symmetry.
+
+HiGHS is the production MILP solver. A deterministic first-fit-decreasing plan
+provides an upper bound and a fallback if a solver is unavailable.
+
+## AI Data Analyst safety and cost controls
+
+The CrewAI agent is grounded through predefined, row-limited analytical tools.
+It cannot execute arbitrary SQL, mutate Aurora DSQL, run generated code, or
+render arbitrary HTML. Chart requests are restricted to validated bar, line,
+and scatter specifications rendered by trusted Streamlit/Altair components.
+
+Amazon Bedrock is called with the ECS task role, so the deployment stores no
+long-lived LLM API key. A transactionally reserved daily ledger enforces the
+USD 0.50 server-side budget before inference.
+
+## Local development
+
+Requirements: Python 3.11+, Node.js 22 for CDK synthesis, and Docker for local
+container validation.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt -r requirements-dev.txt
-
-python -m or_aws_fleet.main --run-date 2026-07-04
-```
-
-Outputs are written to `data/runs/<date>/`.
-
-Useful environment variables:
-
-```env
-RUN_DATE=2026-07-04
-DEMAND_POINTS=120
-VEHICLE_CAPACITY=100
-MAX_VEHICLES=200
-OUTPUT_DIR=data/runs
-S3_BUCKET=
-```
-
-## Tests
-
-```powershell
-pytest
-```
-
-## FastAPI + Pyomo fleet optimizer
-
-The optimizer reads one date from `logistics.daily_programming`, separates the
-lines by origin/destination route, and solves a multi-fleet bin-packing model
-for every route. The weighted objective minimizes active vehicles plus freight
-cost (`Google driving distance x vehicle freight cost/km`).
-
-Constraints:
-
-- Every programming line is assigned to exactly one vehicle.
-- Weight, pallet, and cubic-volume limits are enforced for each enabled vehicle type.
-- Vehicle types and capacities come from `logistics.vehicle_master_data`.
-- Route distance comes from the Google Routes API value in `logistics.route`.
-- Vehicle-count and freight-cost weights are editable for scenario analysis.
-- Vehicle activation is ordered to reduce model symmetry.
-- A deterministic first-fit-decreasing solution is used as the upper bound and
-  as a fallback when a MILP solver is unavailable.
-
-Local API:
-
-```powershell
+python -m pip install -r requirements.txt -r requirements-dev.txt
 $env:PYTHONPATH = "src"
-uvicorn or_aws_fleet.api:app --host 0.0.0.0 --port 8080
 ```
 
-Health check:
+Run the dashboard:
 
 ```powershell
-Invoke-RestMethod http://localhost:8080/health
-```
-
-Solve and persist a plan:
-
-```powershell
-$body = @{
-  programming_date = "2026-07-16"
-  vehicle_count_weight = 1.0
-  freight_cost_weight = 0.001
-  time_limit_seconds = 60
-  persist = $true
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://localhost:8080/solve `
-  -ContentType application/json `
-  -Body $body
-```
-
-Results are stored in:
-
-```text
-logistics.optimization_runs
-logistics.optimization_vehicle_assignments
-logistics.optimization_line_assignments
-```
-
-AWS architecture:
-
-```text
-Internet-facing Application Load Balancer
-  -> Streamlit operations dashboard on ECS/Fargate
-      -> editable solver configuration and simulation
-      -> macro and detailed optimization results
-      -> daily_programming browser and CSV export
-      -> CrewAI data analyst grounded in curated Aurora DSQL queries
-          -> Amazon Nova Lite through Amazon Bedrock
-          -> $0.50 server-side daily usage budget
-  -> FastAPI + Pyomo in the same ECS/Fargate task
-      -> Aurora DSQL daily_programming input
-      -> Pyomo + HiGHS route optimization
-      -> Aurora DSQL optimization result tables
-      -> CloudWatch Logs
-
-DockerImageAsset -> CDK bootstrap ECR repository -> Fargate task definition
-```
-
-The public portfolio dashboard runs continuously with one ECS/Fargate task. CDK
-enforces both desired count and minimum capacity at one, so ECS automatically
-replaces an unhealthy task and production deployments wait for load-balancer
-health before succeeding. Only Streamlit is registered with the public load
-balancer; FastAPI and Aurora DSQL are not directly exposed. Use only
-synthetic/non-confidential portfolio data. The container pins Streamlit to a
-tested version, and ALB cookie stickiness keeps each browser's HTML, lazy
-JavaScript modules, and WebSocket on the same ECS task during rolling deployments.
-
-Availability configuration:
-
-```text
-Public app: http://OrFlee-Optim-5Z8Y1eU8XJzT-747546465.us-east-2.elb.amazonaws.com/
-ECS desired count: 1
-ECS minimum capacity: 1
-Maximum running tasks: 1
-```
-
-The portfolio **Live app** button can link directly to the public app URL; no
-GitHub or AWS authentication step is required for visitors.
-
-```html
-<a href="http://OrFlee-Optim-5Z8Y1eU8XJzT-747546465.us-east-2.elb.amazonaws.com/">
-  <button>Live app</button>
-</a>
-```
-
-### Streamlit operations dashboard
-
-The interface uses a dark logistics control-center theme across every screen,
-with cyan operational KPIs, compact fleet panels, dark data grids, and a
-color-coded route map optimized for desktop demonstrations.
-
-The dashboard provides six operator screens:
-
-1. **Solver Configuration** selects the programming date and displays every
-   vehicle type in an editable table. Users can enable vehicle types, change
-   weight, pallet, volume, and cost/km parameters, tune the objective weights,
-   and execute the Pyomo scenario without changing code.
-2. **Actual Optimization** selects one of the five latest persisted runs, shows macro vehicle,
-   route, box, weight, and occupancy KPIs, presents the vehicle summary, and
-   provides the detailed BASE/TOP operational load plan with CSV export.
-3. **Forecast Optimization** shows the 21-day P50/P90 vehicle curve, forecast and
-   governance KPIs, and date/scenario-level operational loads with CSV export.
-4. **Route Network** maps every factory-to-distribution-center connection using
-   the route master coordinates and Google driving distances. Filters, map
-   tooltips, route KPIs, and a detailed table combine network data with vehicle,
-   load, occupancy, and freight metrics from the latest actual optimization.
-5. **Daily Programming** displays the selected input date with origin and
-   destination filters, totals, and CSV export.
-6. **AI Data Analyst** provides a conversational CrewAI agent backed by Amazon
-   Nova Lite on Amazon Bedrock. The agent can inspect curated, row-limited demand,
-   route, vehicle, forecast, and optimization summaries from Aurora DSQL. It
-   can also request validated bar, line, and scatter charts that Streamlit renders
-   with trusted Altair components. It cannot generate executable HTML, execute
-   arbitrary SQL, or write to the database. A server-side daily usage ledger
-   reserves budget before each request and enforces a $0.50 cap.
-
-Local execution requires the DSQL variables in the current PowerShell session:
-
-```powershell
-$env:PYTHONPATH = "src"
 streamlit run src\or_aws_fleet\streamlit_app.py
 ```
 
-In AWS, the same immutable image runs as two containers in one Fargate task:
-FastAPI listens on port 8080 and Streamlit listens on port 8501. Both use the
-task IAM role for short-lived Aurora DSQL authentication; the dashboard also
-uses that role for Bedrock inference, so no long-lived LLM API key is stored.
-The public load
-balancer routes users to Streamlit and checks `/_stcore/health`.
-
-### Remote image build with CodeBuild
-
-Production images are built in AWS rather than on a developer workstation:
-
-1. CDK packages the application source as an S3 asset. Credentials, local data,
-   caches, infrastructure output, and `.env` files are excluded.
-2. CodeBuild downloads the source into an isolated Linux build environment.
-3. CodeBuild installs test dependencies and runs `pytest`.
-4. A successful test phase runs `docker build` using the project Dockerfile.
-5. The image is tagged with an immutable source-content hash.
-6. CodeBuild pushes the image to the private `or-fleet-optimizer` ECR repository.
-7. ECR scans the image on push and retains the newest 20 images.
-8. The Fargate task definition references the exact immutable image tag.
-9. ECS starts the FastAPI service and sends container output to CloudWatch Logs.
-
-Deploy/update the build resources, execute the remote build, then deploy the
-service stack:
+Run the private API locally:
 
 ```powershell
-cd infra
-npx aws-cdk@2.176.0 deploy OptimizerBuildStack --app "python app.py" --require-approval never
-cd ..
-python scripts\run_optimizer_codebuild.py
-cd infra
-npx aws-cdk@2.176.0 deploy OrFleetOptimizationStack --app "python app.py" --require-approval never
+uvicorn or_aws_fleet.api:app --host 0.0.0.0 --port 8080
 ```
 
-## Production CI/CD
+Run validation:
 
-The repository uses two GitHub Actions workflows:
+```powershell
+ruff check src tests infra scripts
+pytest -q
+docker build --tag or-fleet-optimizer:local .
+cd infra
+cdk synth --quiet
+```
 
-- `.github/workflows/ci.yml` runs on pull requests and `main`. It installs from a
-  clean Python 3.11 environment, runs Ruff and pytest, validates the Docker
-  build, and synthesizes the CDK stacks. It has read-only repository access and
-  no AWS credentials.
-- `.github/workflows/deploy-production.yml` runs only after the `main` CI
-  workflow succeeds, or through a manual dispatch. The job enters the protected `production` environment,
-  obtains short-lived AWS credentials through GitHub OIDC, launches CodeBuild,
-  deploys the immutable ECR image with CDK, and waits for ECS and target-group
-  health.
+Runtime database access uses short-lived Aurora DSQL authentication. Keep local
+configuration in `.env`; that file, credentials, generated data, and deployment
+outputs are excluded from version control and container build context.
 
-No long-lived AWS access key is stored in GitHub. ECS uses a deployment circuit
-breaker with rollback enabled. Deployments are serialized, so two production
-releases cannot modify the service concurrently.
+## CI/CD and production deployment
+
+`Continuous integration` runs for pull requests and pushes to `main`:
+
+1. install a clean Python 3.11 environment;
+2. run Ruff and pytest;
+3. build the Docker image;
+4. synthesize the CDK stacks.
+
+After successful `main` CI, `Deploy production` enters the protected GitHub
+`production` environment, assumes a narrowly trusted AWS role through OIDC,
+starts CodeBuild, publishes an immutable image to ECR, deploys with CDK, and
+waits for both ECS stability and healthy load-balancer targets. The workflow is
+also manually dispatchable.
+
+No long-lived AWS key is stored in GitHub. Production deployments are serialized,
+ECR scans images on push, and the ECS deployment circuit breaker rolls back an
+unhealthy release.
+
+Infrastructure stacks:
 
 ```text
-Pull request -> lint + tests + Docker validation + CDK synth
-      |
-      +-- merge to main
-              |
-              +-- protected production environment approval
-                      |
-                      +-- GitHub OIDC -> short-lived AWS role
-                              |
-                              +-- CodeBuild -> pytest -> Docker -> ECR
-                                      |
-                                      +-- CDK -> ECS/Fargate
-                                              |
-                                              +-- service stable + ALB health
-                                                      |
-                                                      +-- success or ECS rollback
+OptimizerBuildStack          CodeBuild and private ECR image pipeline
+OrFleetOptimizationStack     ALB, ECS service, forecast task, S3, IAM, schedules
+DsqlDailyDemandStack         Lambda demand generator and 00:00 schedule
+AwsSolverPyomoGitHubOidc     GitHub Actions OIDC deployment role
 ```
 
-### One-time AWS and GitHub setup
+Manual production deployment should normally use the existing GitHub Actions
+workflow. For infrastructure development, CDK can be synthesized locally from
+`infra/`; do not commit `.env`, AWS credentials, generated CDK output, or data
+exports.
 
-Bootstrap CDK and create the narrowly trusted GitHub deployment role using an
-administrator's local AWS session:
+## Technology stack
 
-```powershell
-cd infra
-npx aws-cdk@2.176.0 bootstrap aws://922981236785/us-east-2
+Python, Pandas, scikit-learn, joblib, Pyomo, HiGHS, FastAPI, Streamlit, Altair,
+CrewAI, Amazon Bedrock Nova Lite, Aurora DSQL, Amazon S3, Lambda, EventBridge
+Scheduler, CodeBuild, ECR, ECS/Fargate, Application Load Balancer, CloudWatch,
+AWS CDK, Docker, and GitHub Actions.
 
-aws cloudformation deploy `
-  --stack-name AwsSolverPyomoGitHubOidc `
-  --template-file github_oidc.yaml `
-  --capabilities CAPABILITY_NAMED_IAM `
-  --region us-east-2
-```
+## License and portfolio use
 
-An AWS account can have only one GitHub Actions OIDC provider. If it already
-exists, pass its ARN to avoid creating a duplicate:
-
-```powershell
-aws cloudformation deploy `
-  --stack-name AwsSolverPyomoGitHubOidc `
-  --template-file github_oidc.yaml `
-  --capabilities CAPABILITY_NAMED_IAM `
-  --parameter-overrides ExistingGitHubOidcProviderArn=arn:aws:iam::922981236785:oidc-provider/token.actions.githubusercontent.com `
-  --region us-east-2
-```
-
-In GitHub, create an environment named `production`, add the required reviewers,
-restrict its deployment branch to `main`, and create these repository variables:
-
-| Variable | Value |
-|---|---|
-| `AWS_ACCOUNT_ID` | `922981236785` |
-| `AWS_REGION` | `us-east-2` |
-| `AWS_DEPLOY_ROLE_ARN` | The `DeployRoleArn` output from `AwsSolverPyomoGitHubOidc` |
-
-Protect `main`: require pull requests, require the `test` and `synthesize`
-checks, require the branch to be current before merging, block force pushes, and
-block deletion. Dependabot opens weekly Python, CDK, and GitHub Actions update
-pull requests.
-
-### English optimization load-plan table
-
-`logistics.optimization_load_plan` contains the presentation-ready assignment:
-
-```text
-run_id, vehicle_id, position_number, load_level, load_item_label,
-origin, destination, material_code, boxes, units_by_material,
-total_units, weight_kg, pallet_volume, demand_id
-```
-
-`BASE` and `TOP` rows share a position number. Items are ordered by descending
-weight so each base item is at least as heavy as its paired top item. A row is an
-optimized programming-line load item; fractional pallet demand is deliberately
-not represented as a complete physical pallet.
-
-## Deploy With AWS CDK
-
-Install CDK dependencies:
-
-```powershell
-cd infra
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-cdk bootstrap
-cdk deploy
-```
-
-The CDK stack creates:
-
-- S3 bucket for run artifacts.
-- ECS cluster and Fargate task definition.
-- Docker image asset for the optimizer application.
-- EventBridge Scheduler schedule at `17:00 America/Sao_Paulo`.
-- IAM roles needed for ECS task execution and S3 writes.
-
-## Cost Notes
-
-The task is short-lived and runs once per day. This keeps cost low while still
-showing a realistic cloud-native OR pipeline: scheduled generation, containerized
-optimization, durable outputs, logs, and infrastructure as code.
-
-## Upload Google Sheets data to Aurora DSQL
-
-The uploader in `scripts/upload_sheets_to_dsql.py` reads the `VEHICLE MASTER DATA`
-Google Sheets tab and creates/loads the retained Aurora DSQL table:
-
-- `VEHICLE MASTER DATA` -> `logistics.vehicle_master_data`
-
-The optimizer uses `logistics.daily_programming` as its demand input and joins
-the retained fleet and route master tables:
-
-```text
-logistics.vehicle_master_data
-logistics.route
-logistics.daily_programming
-```
-
-`logistics.route.google_driving_distance_km` contains Google Routes API driving
-distance. `daily_programming` carries that distance and `total_volume_m3` into
-the solver input.
-
-Setup:
-
-```powershell
-copy dsql.env.example .env
-python -m pip install -r requirements.txt
-```
-
-Fill `.env` with AWS credentials and your DSQL cluster endpoint. The Google service account path is already pointed at `C:\Users\israb\Documents\ML-production\service-account.json`.
-
-Dry-run first:
-
-```powershell
-python scripts\upload_sheets_to_dsql.py --dry-run
-```
-
-Upload/replace the vehicle table:
-
-```powershell
-python scripts\upload_sheets_to_dsql.py --replace
-```
-
-Then in the Aurora DSQL query editor:
-
-```sql
-SELECT * FROM logistics.vehicle_master_data LIMIT 20;
-```
-
-The one-time DSQL cleanup migration is available at:
-
-```powershell
-python scripts\drop_legacy_dsql_tables.py
-```
-
-Package Lambda dependencies and deploy/update the Lambda schedule:
-
-```powershell
-cd C:\Users\israb\Documents\OR-production-AWS
-python -m pip install -r lambda\dsql_daily_demand\requirements.txt -t lambda\dsql_daily_demand --upgrade
-cd infra
-npx aws-cdk@2.176.0 deploy DsqlDailyDemandStack --app "python dsql_demand_app.py" --require-approval never
-```
-
-Demand volume is calibrated with `DEMAND_UNITS_MULTIPLIER=4`. The versioned
-historical migration is idempotent and records each completed table/date step:
-
-```powershell
-$env:PYTHONPATH = "src"
-python scripts\scale_beverage_demand.py --through-date 2026-07-17
-```
-
+This repository is a portfolio demonstration. Review AWS costs, IAM policies,
+networking, data classification, and operational controls before adapting it to
+a commercial workload.
