@@ -632,20 +632,20 @@ def route_network_screen() -> None:
         unsafe_allow_html=True,
     )
     cost_metrics = st.columns(4)
-    cost_metrics[0].metric("Current freight cost", f"{cost_summary['current_cost']:,.2f}")
+    cost_metrics[0].metric("Current freight cost", f"{cost_summary['current_cost']:,.0f}")
     cost_metrics[1].metric(
         "Current avoidable cost",
-        f"{cost_summary['current_avoidable']:,.2f}",
+        f"{cost_summary['current_avoidable']:,.0f}",
         help="Theoretical cost opportunity represented by unused current vehicle capacity.",
     )
     cost_metrics[2].metric(
         "21-day forecast cost",
-        f"{cost_summary['forecast_cost']:,.2f}",
+        f"{cost_summary['forecast_cost']:,.0f}",
         help="P50 vehicle requirements multiplied by the latest average freight cost per vehicle.",
     )
     cost_metrics[3].metric(
         "Forecast avoidable cost",
-        f"{cost_summary['forecast_avoidable']:,.2f}",
+        f"{cost_summary['forecast_avoidable']:,.0f}",
         help="Theoretical 21-day cost opportunity represented by forecast unused capacity.",
     )
 
@@ -669,7 +669,12 @@ def route_network_screen() -> None:
         alt.Chart(cost_chart_data)
         .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
         .encode(
-            x=alt.X("Period:N", title=None, axis=alt.Axis(labelAngle=0, grid=False)),
+            x=alt.X(
+                "Period:N",
+                title=None,
+                sort=["Current network", "21-day P50 forecast"],
+                axis=alt.Axis(labelAngle=0, grid=False),
+            ),
             xOffset="Cost type:N",
             y=alt.Y("Cost:Q", title="Freight cost", axis=alt.Axis(grid=False)),
             color=alt.Color(
@@ -680,7 +685,7 @@ def route_network_screen() -> None:
             tooltip=[
                 alt.Tooltip("Period:N"),
                 alt.Tooltip("Cost type:N"),
-                alt.Tooltip("Cost:Q", format=",.2f"),
+                alt.Tooltip("Cost:Q", format=",.0f"),
             ],
         )
         .properties(height=280)
@@ -752,6 +757,27 @@ def route_network_screen() -> None:
     nodes = pd.concat([origin_nodes, destination_nodes], ignore_index=True)
     arc_records = filtered.to_dict(orient="records")
     node_records = nodes.to_dict(orient="records")
+    route_table = filtered[
+        [
+            "origin", "destiny", "display_distance_km", "vehicle_count",
+            "load_weight_kg", "load_pallets", "load_boxes",
+            "occupancy_percent", "freight_cost",
+        ]
+    ].rename(
+        columns={
+            "origin": "Origin",
+            "destiny": "Destination",
+            "display_distance_km": "Driving distance (km)",
+            "vehicle_count": "Vehicles",
+            "load_weight_kg": "Weight (kg)",
+            "load_pallets": "Pallet demand",
+            "load_boxes": "Boxes",
+            "occupancy_percent": "Avg. occupancy (%)",
+            "freight_cost": "Freight cost",
+        }
+    )
+    numeric_columns = route_table.select_dtypes(include="number").columns
+    route_table[numeric_columns] = route_table[numeric_columns].round(0)
 
     midpoint_latitude = float(nodes["latitude"].mean())
     midpoint_longitude = float(nodes["longitude"].mean())
@@ -835,7 +861,7 @@ def route_network_screen() -> None:
         st.metric("Active vehicles", f"{int(filtered['vehicle_count'].sum()):,}")
         st.metric(
             "Average efficiency",
-            f"{float(filtered['average_occupancy'].mean()):.1%}",
+            f"{float(filtered['average_occupancy'].mean()):.0%}",
         )
         st.metric(
             "Total lane distance",
@@ -851,6 +877,20 @@ def route_network_screen() -> None:
         st.caption(
             "Colors identify factory route groups. Cyan markers represent distribution centers."
         )
+        st.markdown(
+            '<div class="section-title">All route performance</div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            route_table,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Avg. occupancy (%)": st.column_config.ProgressColumn(
+                    format="%.0f%%", min_value=0, max_value=100
+                )
+            },
+        )
 
     with route_detail:
         st.markdown(
@@ -863,56 +903,12 @@ def route_network_screen() -> None:
         selected = filtered.loc[filtered["route"] == route_name].iloc[0]
         st.metric(
             "Driving distance",
-            f"{float(selected['display_distance_km']):,.1f} km",
+            f"{float(selected['display_distance_km']):,.0f} km",
         )
         st.metric("Vehicles", f"{int(selected['vehicle_count']):,}")
         st.metric("Loaded weight", f"{float(selected['load_weight_kg']):,.0f} kg")
-        st.metric("Pallet demand", f"{float(selected['load_pallets']):,.1f}")
-        st.metric("Efficiency", f"{float(selected['average_occupancy']):.1%}")
-        st.metric("Freight cost", f"{float(selected['freight_cost']):,.2f}")
-
-        st.markdown(
-            '<div class="section-title">Longest lanes</div>',
-            unsafe_allow_html=True,
-        )
-        longest = filtered.nlargest(4, "display_distance_km")[
-            ["route", "display_distance_km"]
-        ].rename(columns={"route": "Route", "display_distance_km": "km"})
-        st.dataframe(longest, hide_index=True, use_container_width=True, height=175)
-
-    st.markdown(
-        '<div class="section-title">All route performance</div>',
-        unsafe_allow_html=True,
-    )
-    route_table = filtered[
-        [
-            "origin", "destiny", "display_distance_km", "vehicle_count",
-            "load_weight_kg", "load_pallets", "load_boxes",
-            "occupancy_percent", "freight_cost",
-        ]
-    ].rename(
-        columns={
-            "origin": "Origin",
-            "destiny": "Destination",
-            "display_distance_km": "Driving distance (km)",
-            "vehicle_count": "Vehicles",
-            "load_weight_kg": "Weight (kg)",
-            "load_pallets": "Pallet demand",
-            "load_boxes": "Boxes",
-            "occupancy_percent": "Avg. occupancy (%)",
-            "freight_cost": "Freight cost",
-        }
-    )
-    st.dataframe(
-        route_table,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Avg. occupancy (%)": st.column_config.ProgressColumn(
-                format="%.1f%%", min_value=0, max_value=100
-            )
-        },
-    )
+        st.metric("Efficiency", f"{float(selected['average_occupancy']):.0%}")
+        st.metric("Freight cost", f"{float(selected['freight_cost']):,.0f}")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
