@@ -143,7 +143,7 @@ st.markdown(
         background-image: url("/app/static/icons/package.png");
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:nth-of-type(6) p::before {
-        background-image: url("/app/static/icons/actual.png");
+        background-image: url("/app/static/icons/analyst.png");
     }
     [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
         background: rgba(62, 194, 238, .12);
@@ -1081,7 +1081,7 @@ def render_agent_chart(chart: AgentChart) -> None:
 
 
 def analytics_agent_screen() -> None:
-    page_title("AI Data Analyst", "actual")
+    page_title("AI Data Analyst", "analyst")
     st.caption(
         "Ask questions about demand, routes, vehicles, forecasts, and optimization results. "
         "The CrewAI agent uses a read-only, curated connection to Aurora DSQL."
