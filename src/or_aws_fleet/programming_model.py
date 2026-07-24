@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import math
 import re
 
 import pyomo.environ as pyo
+
+
+MAX_PALLETS_PER_LEVEL = 1.0
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,70 @@ class RouteSolution:
     origin: str
     destiny: str
     vehicles: tuple[VehicleLoad, ...]
+
+
+def split_programming_line_by_level(
+    line: ProgrammingLine,
+    max_pallets_per_level: float = MAX_PALLETS_PER_LEVEL,
+) -> list[ProgrammingLine]:
+    """Split one demand line into proportional load items that fit one level."""
+    if max_pallets_per_level <= 0:
+        raise ValueError("Maximum pallets per level must be positive.")
+    if line.total_pallets < 0:
+        raise ValueError(f"Demand line has negative pallet volume: {line.demand_id}")
+    if line.total_pallets <= max_pallets_per_level + 1e-7:
+        return [line]
+
+    chunk_count = math.ceil((line.total_pallets - 1e-7) / max_pallets_per_level)
+    remaining_pallets = line.total_pallets
+    remaining_weight = line.total_weight_kg
+    remaining_boxes = line.total_boxes
+    remaining_volume = line.total_volume_m3
+    remaining_units = line.units
+    chunks: list[ProgrammingLine] = []
+
+    for chunk_number in range(1, chunk_count + 1):
+        chunks_left = chunk_count - chunk_number + 1
+        chunk_pallets = min(max_pallets_per_level, remaining_pallets)
+        ratio = chunk_pallets / remaining_pallets if remaining_pallets > 0 else 1 / chunks_left
+        chunk_weight = remaining_weight if chunks_left == 1 else remaining_weight * ratio
+        chunk_boxes = remaining_boxes if chunks_left == 1 else remaining_boxes * ratio
+        chunk_volume = remaining_volume if chunks_left == 1 else remaining_volume * ratio
+        chunk_units = (
+            remaining_units
+            if chunks_left == 1
+            else min(remaining_units, max(0, round(remaining_units * ratio)))
+        )
+        suffix = f"-L{chunk_number:03d}"
+        chunks.append(
+            replace(
+                line,
+                demand_id=f"{line.demand_id[: 40 - len(suffix)]}{suffix}",
+                total_weight_kg=chunk_weight,
+                total_pallets=chunk_pallets,
+                total_boxes=chunk_boxes,
+                total_volume_m3=chunk_volume,
+                units=chunk_units,
+            )
+        )
+        remaining_pallets -= chunk_pallets
+        remaining_weight -= chunk_weight
+        remaining_boxes -= chunk_boxes
+        remaining_volume -= chunk_volume
+        remaining_units -= chunk_units
+
+    return chunks
+
+
+def split_programming_lines_by_level(
+    lines: list[ProgrammingLine],
+    max_pallets_per_level: float = MAX_PALLETS_PER_LEVEL,
+) -> list[ProgrammingLine]:
+    return [
+        chunk
+        for line in lines
+        for chunk in split_programming_line_by_level(line, max_pallets_per_level)
+    ]
 
 
 def available_solver():
@@ -194,6 +262,12 @@ def solve_route(
         raise ValueError("A route must contain at least one programming line.")
     if len({line.origin for line in lines}) != 1 or len({line.destiny for line in lines}) != 1:
         raise ValueError("solve_route requires exactly one origin-destiny route.")
+    if any(line.total_pallets > MAX_PALLETS_PER_LEVEL + 1e-7 for line in lines):
+        raise ValueError(
+            "Every programming line must fit one BASE or TOP level "
+            f"({MAX_PALLETS_PER_LEVEL:g} pallet maximum). "
+            "Use split_programming_lines_by_level before solving."
+        )
     types = vehicle_types or [_legacy_vehicle(max_weight_kg, max_pallets)]
     if not types:
         raise ValueError("At least one vehicle type must be enabled.")
@@ -250,6 +324,17 @@ def solve_route(
             lines[item].total_pallets * m.x[item, vehicle_index, slot] for item in m.I
         )
         <= types[vehicle_index].vehicle_capacity_pallets * m.y[vehicle_index, slot],
+    )
+    # Each levelized programming line becomes one BASE or TOP load level.
+    # If the line is assigned to a vehicle, its pallet volume cannot exceed
+    # the physical one-pallet limit of that level.
+    model.level_pallet_capacity = pyo.Constraint(
+        model.I,
+        model.S,
+        rule=lambda m, item, vehicle_index, slot: (
+            lines[item].total_pallets * m.x[item, vehicle_index, slot]
+            <= MAX_PALLETS_PER_LEVEL
+        ),
     )
     model.volume_capacity = pyo.Constraint(
         model.S,

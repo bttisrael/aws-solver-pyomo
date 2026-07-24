@@ -10,7 +10,12 @@ from decimal import Decimal
 import boto3
 import pg8000.dbapi
 
-from or_aws_fleet.programming_model import ProgrammingLine, RouteSolution, VehicleType
+from or_aws_fleet.programming_model import (
+    ProgrammingLine,
+    RouteSolution,
+    VehicleType,
+    split_programming_lines_by_level,
+)
 
 
 CREATE_RUNS_SQL = """
@@ -153,7 +158,7 @@ def load_programming(conn, programming_date: date) -> list[ProgrammingLine]:
     ]
     cursor.close()
     conn.rollback()
-    return rows
+    return split_programming_lines_by_level(rows)
 
 
 def load_vehicle_types(conn) -> list[VehicleType]:
