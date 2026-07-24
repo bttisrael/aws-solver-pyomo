@@ -421,7 +421,9 @@ def run_daily_forecast(
                         vehicle.load_boxes, vehicle.weight_utilization, vehicle.pallet_utilization))
                     for demand_id in vehicle.demand_ids:
                         line = line_map[demand_id]
-                        for level in split_programming_line_by_level(line):
+                        for level in split_programming_line_by_level(
+                            line, max_demand_id_length=80
+                        ):
                             load_rows.append((
                                 run_id, forecast_date, scenario, forecast_vehicle_id, level.demand_id,
                                 level.origin, level.destiny, level.cod_material, level.units,
