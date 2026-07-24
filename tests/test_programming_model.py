@@ -22,7 +22,7 @@ def line(number: int, weight: float, pallets: float) -> ProgrammingLine:
 
 def test_solver_minimizes_vehicles_with_weight_and_pallet_limits() -> None:
     solution = solve_route(
-        [line(1, 15_000, 1), line(2, 10_000, 1), line(3, 9_000, 1)],
+        [line(1, 15_000, 20), line(2, 10_000, 25), line(3, 9_000, 35)],
         max_weight_kg=25_000,
         max_pallets=60,
         time_limit_seconds=10,
@@ -35,7 +35,7 @@ def test_solver_minimizes_vehicles_with_weight_and_pallet_limits() -> None:
 
 def test_solver_rejects_line_larger_than_vehicle() -> None:
     try:
-        solve_route([line(1, 26_000, 1)], max_weight_kg=25_000, max_pallets=60)
+        solve_route([line(1, 26_000, 10)], max_weight_kg=25_000, max_pallets=60)
     except ValueError as exc:
         assert "exceed" in str(exc)
     else:
@@ -48,7 +48,7 @@ def test_solver_selects_vehicle_type_using_count_capacity_and_route_cost() -> No
         VehicleType("Cargo van", 8, 1_200, 4.2, 5),
         VehicleType("Box truck", 45, 10_000, 12, 30),
     ]
-    lines = [line(1, 600, 1), line(2, 600, 1)]
+    lines = [line(1, 600, 2), line(2, 600, 2)]
     solution = solve_route(
         lines,
         vehicle_types=vehicles,
@@ -67,7 +67,7 @@ def test_solver_enforces_cubic_volume_capacity() -> None:
         VehicleType("Cargo van", 8, 1_200, 4.2, 5),
         VehicleType("Box truck", 45, 10_000, 12, 30),
     ]
-    oversized_volume = line(1, 700, 1)
+    oversized_volume = line(1, 700, 2)
     oversized_volume = ProgrammingLine(
         **{**oversized_volume.__dict__, "total_volume_m3": 9}
     )
@@ -103,6 +103,13 @@ def test_programming_line_is_split_into_one_pallet_levels() -> None:
     assert sum(level.units for level in levels) == original.units
 
 
-def test_solver_rejects_an_unsplit_line_above_one_pallet() -> None:
-    with pytest.raises(ValueError, match="one BASE or TOP level"):
-        solve_route([line(1, 1_000, 1.01)])
+def test_solver_counts_one_level_for_every_started_pallet() -> None:
+    vehicle = VehicleType("Two-level truck", 100, 100_000, 1, 2)
+    solution = solve_route(
+        [line(1, 1_000, 1.1), line(2, 1_000, 0.9)],
+        vehicle_types=[vehicle],
+        distance_km=10,
+        time_limit_seconds=10,
+    )
+
+    assert len(solution.vehicles) == 2

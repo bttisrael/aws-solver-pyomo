@@ -125,6 +125,16 @@ def split_programming_lines_by_level(
     ]
 
 
+def required_level_slots(pallets: float) -> int:
+    """Return one physical level for every started pallet."""
+    return max(0, math.ceil(pallets - 1e-7))
+
+
+def vehicle_level_capacity(vehicle: VehicleType) -> int:
+    """Return the number of one-pallet BASE/TOP levels in a vehicle."""
+    return max(0, math.floor(vehicle.vehicle_capacity_pallets + 1e-7))
+
+
 def available_solver():
     for name in ("appsi_highs", "highs", "cbc", "glpk"):
         solver = pyo.SolverFactory(name)
@@ -144,6 +154,7 @@ def _fits(line: ProgrammingLine, vehicle: VehicleType) -> bool:
     return (
         line.total_weight_kg <= vehicle.vehicle_capacity_kg + 1e-7
         and line.total_pallets <= vehicle.vehicle_capacity_pallets + 1e-7
+        and required_level_slots(line.total_pallets) <= vehicle_level_capacity(vehicle)
         and line.total_volume_m3 <= vehicle.vehicle_capacity_m3 + 1e-7
     )
 
@@ -158,15 +169,18 @@ def _greedy_multi_vehicle(
     bins: list[tuple[VehicleType, list[int]]] = []
     weights: list[float] = []
     pallets: list[float] = []
+    level_slots: list[int] = []
     volumes: list[float] = []
     largest_weight = max(vehicle.vehicle_capacity_kg for vehicle in vehicle_types)
     largest_pallets = max(vehicle.vehicle_capacity_pallets for vehicle in vehicle_types)
+    largest_level_capacity = max(vehicle_level_capacity(vehicle) for vehicle in vehicle_types)
     largest_volume = max(vehicle.vehicle_capacity_m3 for vehicle in vehicle_types)
     order = sorted(
         range(len(lines)),
         key=lambda idx: max(
             lines[idx].total_weight_kg / largest_weight,
             lines[idx].total_pallets / largest_pallets,
+            required_level_slots(lines[idx].total_pallets) / largest_level_capacity,
             lines[idx].total_volume_m3 / largest_volume,
         ),
         reverse=True,
@@ -178,6 +192,8 @@ def _greedy_multi_vehicle(
             for number, (vehicle, _) in enumerate(bins)
             if weights[number] + line.total_weight_kg <= vehicle.vehicle_capacity_kg + 1e-7
             and pallets[number] + line.total_pallets <= vehicle.vehicle_capacity_pallets + 1e-7
+            and level_slots[number] + required_level_slots(line.total_pallets)
+            <= vehicle_level_capacity(vehicle)
             and volumes[number] + line.total_volume_m3 <= vehicle.vehicle_capacity_m3 + 1e-7
         ]
         if feasible_bins:
@@ -187,6 +203,10 @@ def _greedy_multi_vehicle(
                     (weights[item] + line.total_weight_kg) / bins[item][0].vehicle_capacity_kg,
                     (pallets[item] + line.total_pallets)
                     / bins[item][0].vehicle_capacity_pallets,
+                    (
+                        level_slots[item] + required_level_slots(line.total_pallets)
+                    )
+                    / vehicle_level_capacity(bins[item][0]),
                     (volumes[item] + line.total_volume_m3)
                     / bins[item][0].vehicle_capacity_m3,
                 ),
@@ -194,6 +214,7 @@ def _greedy_multi_vehicle(
             bins[number][1].append(idx)
             weights[number] += line.total_weight_kg
             pallets[number] += line.total_pallets
+            level_slots[number] += required_level_slots(line.total_pallets)
             volumes[number] += line.total_volume_m3
             continue
         feasible_types = [vehicle for vehicle in vehicle_types if _fits(line, vehicle)]
@@ -207,6 +228,7 @@ def _greedy_multi_vehicle(
         bins.append((vehicle, [idx]))
         weights.append(line.total_weight_kg)
         pallets.append(line.total_pallets)
+        level_slots.append(required_level_slots(line.total_pallets))
         volumes.append(line.total_volume_m3)
     return bins
 
@@ -262,12 +284,6 @@ def solve_route(
         raise ValueError("A route must contain at least one programming line.")
     if len({line.origin for line in lines}) != 1 or len({line.destiny for line in lines}) != 1:
         raise ValueError("solve_route requires exactly one origin-destiny route.")
-    if any(line.total_pallets > MAX_PALLETS_PER_LEVEL + 1e-7 for line in lines):
-        raise ValueError(
-            "Every programming line must fit one BASE or TOP level "
-            f"({MAX_PALLETS_PER_LEVEL:g} pallet maximum). "
-            "Use split_programming_lines_by_level before solving."
-        )
     types = vehicle_types or [_legacy_vehicle(max_weight_kg, max_pallets)]
     if not types:
         raise ValueError("At least one vehicle type must be enabled.")
@@ -281,11 +297,24 @@ def solve_route(
         )
     ):
         raise ValueError("Vehicle capacities must be positive.")
+    if any(vehicle_level_capacity(vehicle) < 1 for vehicle in types):
+        raise ValueError("Every vehicle must provide at least one pallet level.")
+    if vehicle_count_weight <= 0 or freight_cost_weight < 0:
+        raise ValueError("Objective weights must be positive or zero as configured.")
+    if any(
+        line.total_weight_kg <= 0
+        and line.total_pallets <= 0
+        and line.total_volume_m3 <= 0
+        for line in lines
+    ):
+        raise ValueError("Every demand line must consume weight, pallet, or volume capacity.")
     route_distance = (
         float(distance_km)
         if distance_km is not None
         else max(line.google_driving_distance_km for line in lines)
     )
+    if route_distance < 0:
+        raise ValueError("Route distance cannot be negative.")
     greedy_bins = _greedy_multi_vehicle(
         lines, types, route_distance, vehicle_count_weight, freight_cost_weight
     )
@@ -300,7 +329,33 @@ def solve_route(
         )
 
     items = list(range(len(lines)))
-    slots = [(vehicle_index, slot) for vehicle_index in range(len(types)) for slot in items]
+    activation_cost = [
+        vehicle_count_weight
+        + freight_cost_weight * vehicle.freight_cost_per_km * route_distance
+        for vehicle in types
+    ]
+    greedy_objective = sum(
+        activation_cost[types.index(vehicle)] for vehicle, _ in greedy_bins
+    )
+    greedy_type_counts = {
+        vehicle_index: sum(vehicle == types[vehicle_index] for vehicle, _ in greedy_bins)
+        for vehicle_index in range(len(types))
+    }
+    slot_limits = {
+        vehicle_index: min(
+            len(items),
+            max(
+                greedy_type_counts[vehicle_index],
+                math.floor((greedy_objective + 1e-7) / activation_cost[vehicle_index]),
+            ),
+        )
+        for vehicle_index in range(len(types))
+    }
+    slots = [
+        (vehicle_index, slot)
+        for vehicle_index in range(len(types))
+        for slot in range(slot_limits[vehicle_index])
+    ]
     model = pyo.ConcreteModel("multi_vehicle_route_optimization")
     model.I = pyo.Set(initialize=items)
     model.S = pyo.Set(initialize=slots, dimen=2)
@@ -325,16 +380,17 @@ def solve_route(
         )
         <= types[vehicle_index].vehicle_capacity_pallets * m.y[vehicle_index, slot],
     )
-    # Each levelized programming line becomes one BASE or TOP load level.
-    # If the line is assigned to a vehicle, its pallet volume cannot exceed
-    # the physical one-pallet limit of that level.
-    model.level_pallet_capacity = pyo.Constraint(
-        model.I,
+    # A partial pallet still consumes one complete physical BASE or TOP level.
+    # Keeping original demand lines here avoids the quadratic model growth
+    # caused by splitting every line into level-sized optimization items.
+    model.level_capacity = pyo.Constraint(
         model.S,
-        rule=lambda m, item, vehicle_index, slot: (
-            lines[item].total_pallets * m.x[item, vehicle_index, slot]
-            <= MAX_PALLETS_PER_LEVEL
-        ),
+        rule=lambda m, vehicle_index, slot: sum(
+            required_level_slots(lines[item].total_pallets)
+            * m.x[item, vehicle_index, slot]
+            for item in m.I
+        )
+        <= vehicle_level_capacity(types[vehicle_index]) * m.y[vehicle_index, slot],
     )
     model.volume_capacity = pyo.Constraint(
         model.S,
@@ -343,14 +399,12 @@ def solve_route(
         )
         <= types[vehicle_index].vehicle_capacity_m3 * m.y[vehicle_index, slot],
     )
-    model.activation = pyo.Constraint(
-        model.I,
-        model.S,
-        rule=lambda m, item, vehicle_index, slot: m.x[item, vehicle_index, slot]
-        <= m.y[vehicle_index, slot],
-    )
     model.symmetry = pyo.Constraint(
-        [(vehicle_index, slot) for vehicle_index in range(len(types)) for slot in items[:-1]],
+        [
+            (vehicle_index, slot)
+            for vehicle_index in range(len(types))
+            for slot in range(slot_limits[vehicle_index] - 1)
+        ],
         rule=lambda m, vehicle_index, slot: m.y[vehicle_index, slot]
         >= m.y[vehicle_index, slot + 1],
     )

@@ -14,7 +14,7 @@ from or_aws_fleet.programming_model import (
     ProgrammingLine,
     RouteSolution,
     VehicleType,
-    split_programming_lines_by_level,
+    split_programming_line_by_level,
 )
 
 
@@ -158,7 +158,7 @@ def load_programming(conn, programming_date: date) -> list[ProgrammingLine]:
     ]
     cursor.close()
     conn.rollback()
-    return split_programming_lines_by_level(rows)
+    return rows
 
 
 def load_vehicle_types(conn) -> list[VehicleType]:
@@ -289,7 +289,11 @@ def persist_solution(
     item_sequence = 1
     for vehicle in vehicles:
         assigned = sorted(
-            (lines_by_id[demand_id] for demand_id in vehicle.demand_ids),
+            (
+                level
+                for demand_id in vehicle.demand_ids
+                for level in split_programming_line_by_level(lines_by_id[demand_id])
+            ),
             key=lambda line: line.total_weight_kg,
             reverse=True,
         )

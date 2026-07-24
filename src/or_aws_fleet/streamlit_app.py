@@ -14,7 +14,7 @@ from or_aws_fleet.analytics_agent import (
     get_daily_usage,
     run_analytics_agent_response,
 )
-from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve
+from or_aws_fleet.api import SolveRequest, VehicleTypeParameter, solve_request
 from or_aws_fleet.dashboard_data import (
     available_programming_dates,
     daily_programming,
@@ -443,7 +443,7 @@ def configuration_screen() -> None:
         with st.spinner("Optimizing the selected day and the next 21 forecast days..."):
             try:
                 update_progress(10, "Optimizing selected-day demand")
-                result = solve(
+                result = solve_request(
                     SolveRequest(
                         programming_date=programming_date,
                         vehicle_types=selected_vehicles,
@@ -451,7 +451,8 @@ def configuration_screen() -> None:
                         freight_cost_weight=freight_cost_weight,
                         time_limit_seconds=int(time_limit),
                         persist=persist,
-                    )
+                    ),
+                    progress_callback=update_progress,
                 )
                 update_progress(35, "Selected-day optimization complete")
                 forecast_run_id = run_daily_forecast(

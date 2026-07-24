@@ -24,7 +24,12 @@ from or_aws_fleet.forecasting import (
     retraining_decision,
     automl_forecast,
 )
-from or_aws_fleet.programming_model import ProgrammingLine, VehicleType, solve_route
+from or_aws_fleet.programming_model import (
+    ProgrammingLine,
+    VehicleType,
+    solve_route,
+    split_programming_line_by_level,
+)
 
 
 DDL = (
@@ -254,9 +259,7 @@ def _lines_for_day(frame: pd.DataFrame, scenario: str, max_weight: float, max_pa
         unit_weight = float(row.material_weight)
         total_weight = total_units * unit_weight / 1000
         total_pallets = total_units / (qty_box * qty_pallet)
-        # A generated line becomes one physical BASE or TOP level. Even when a
-        # vehicle has capacity for many pallets, one level can carry at most one.
-        chunks = max(1, math.ceil(max(total_weight / max_weight, total_pallets)))
+        chunks = max(1, math.ceil(max(total_weight / max_weight, total_pallets / max_pallets)))
         remaining = total_units
         for chunk in range(1, chunks + 1):
             units = math.ceil(remaining / (chunks - chunk + 1))
@@ -418,9 +421,11 @@ def run_daily_forecast(
                         vehicle.load_boxes, vehicle.weight_utilization, vehicle.pallet_utilization))
                     for demand_id in vehicle.demand_ids:
                         line = line_map[demand_id]
-                        load_rows.append((run_id, forecast_date, scenario, forecast_vehicle_id, demand_id,
-                            line.origin, line.destiny, line.cod_material, line.units, line.total_boxes,
-                            line.total_pallets, line.total_weight_kg))
+                        for level in split_programming_line_by_level(line):
+                            load_rows.append((
+                                run_id, forecast_date, scenario, forecast_vehicle_id, level.demand_id,
+                                level.origin, level.destiny, level.cod_material, level.units,
+                                level.total_boxes, level.total_pallets, level.total_weight_kg))
                 completed_scenarios += 1
                 if progress_callback:
                     progress_callback(
