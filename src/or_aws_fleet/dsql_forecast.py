@@ -254,7 +254,9 @@ def _lines_for_day(frame: pd.DataFrame, scenario: str, max_weight: float, max_pa
         unit_weight = float(row.material_weight)
         total_weight = total_units * unit_weight / 1000
         total_pallets = total_units / (qty_box * qty_pallet)
-        chunks = max(1, math.ceil(max(total_weight / max_weight, total_pallets / max_pallets)))
+        # A generated line becomes one physical BASE or TOP level. Even when a
+        # vehicle has capacity for many pallets, one level can carry at most one.
+        chunks = max(1, math.ceil(max(total_weight / max_weight, total_pallets)))
         remaining = total_units
         for chunk in range(1, chunks + 1):
             units = math.ceil(remaining / (chunks - chunk + 1))
