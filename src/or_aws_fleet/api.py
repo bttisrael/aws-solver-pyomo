@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
@@ -63,6 +64,13 @@ def health() -> dict[str, str]:
 
 @app.post("/solve", response_model=SolveResponse)
 def solve(request: SolveRequest) -> SolveResponse:
+    return solve_request(request)
+
+
+def solve_request(
+    request: SolveRequest,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> SolveResponse:
     programming_date = request.programming_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     settings = DatabaseSettings.from_env()
     conn = settings.connect()
@@ -94,19 +102,26 @@ def solve(request: SolveRequest) -> SolveResponse:
         for line in lines:
             routes[(line.origin, line.destiny)].append(line)
 
-        solutions = [
-            solve_route(
-                route_lines,
-                max_weight_kg=request.max_weight_kg,
-                max_pallets=request.max_pallets,
-                time_limit_seconds=request.time_limit_seconds,
-                vehicle_types=vehicle_types,
-                distance_km=route_lines[0].google_driving_distance_km,
-                vehicle_count_weight=request.vehicle_count_weight,
-                freight_cost_weight=request.freight_cost_weight,
+        route_groups = list(routes.values())
+        solutions = []
+        for route_number, route_lines in enumerate(route_groups, start=1):
+            solutions.append(
+                solve_route(
+                    route_lines,
+                    max_weight_kg=request.max_weight_kg,
+                    max_pallets=request.max_pallets,
+                    time_limit_seconds=request.time_limit_seconds,
+                    vehicle_types=vehicle_types,
+                    distance_km=route_lines[0].google_driving_distance_km,
+                    vehicle_count_weight=request.vehicle_count_weight,
+                    freight_cost_weight=request.freight_cost_weight,
+                )
             )
-            for route_lines in routes.values()
-        ]
+            if progress_callback:
+                progress_callback(
+                    10 + int(25 * route_number / len(route_groups)),
+                    f"Optimized selected-day route {route_number}/{len(route_groups)}",
+                )
         vehicles = [vehicle for solution in solutions for vehicle in solution.vehicles]
         run_id = (
             persist_solution(
