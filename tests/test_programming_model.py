@@ -103,6 +103,27 @@ def test_programming_line_is_split_into_one_pallet_levels() -> None:
     assert sum(level.units for level in levels) == original.units
 
 
+def test_split_level_ids_remain_unique_when_long_ids_share_a_prefix() -> None:
+    common_prefix = "20260725-FAC_01_SERRA_NORTE-DC_03_C-"
+    first = line(1, 1_000, 2)
+    second = line(2, 1_000, 2)
+    first = ProgrammingLine(**{**first.__dict__, "demand_id": common_prefix + "MAT-A-P50-1"})
+    second = ProgrammingLine(**{**second.__dict__, "demand_id": common_prefix + "MAT-B-P50-1"})
+
+    level_ids = [
+        level.demand_id
+        for demand in (first, second)
+        for level in split_programming_line_by_level(
+            demand, max_demand_id_length=80
+        )
+    ]
+
+    assert len(level_ids) == len(set(level_ids))
+    assert all(len(demand_id) <= 80 for demand_id in level_ids)
+    assert level_ids[0].endswith("-L001")
+    assert level_ids[1].endswith("-L002")
+
+
 def test_solver_counts_one_level_for_every_started_pallet() -> None:
     vehicle = VehicleType("Two-level truck", 100, 100_000, 1, 2)
     solution = solve_route(

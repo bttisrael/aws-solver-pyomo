@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 import math
 import re
 
@@ -64,10 +65,13 @@ class RouteSolution:
 def split_programming_line_by_level(
     line: ProgrammingLine,
     max_pallets_per_level: float = MAX_PALLETS_PER_LEVEL,
+    max_demand_id_length: int = 40,
 ) -> list[ProgrammingLine]:
     """Split one demand line into proportional load items that fit one level."""
     if max_pallets_per_level <= 0:
         raise ValueError("Maximum pallets per level must be positive.")
+    if max_demand_id_length < 14:
+        raise ValueError("Maximum demand ID length must be at least 14.")
     if line.total_pallets < 0:
         raise ValueError(f"Demand line has negative pallet volume: {line.demand_id}")
     if line.total_pallets <= max_pallets_per_level + 1e-7:
@@ -94,10 +98,15 @@ def split_programming_line_by_level(
             else min(remaining_units, max(0, round(remaining_units * ratio)))
         )
         suffix = f"-L{chunk_number:03d}"
+        demand_id = f"{line.demand_id}{suffix}"
+        if len(demand_id) > max_demand_id_length:
+            digest = hashlib.sha256(line.demand_id.encode("utf-8")).hexdigest()[:8]
+            prefix_length = max_demand_id_length - len(digest) - len(suffix) - 1
+            demand_id = f"{line.demand_id[:prefix_length]}-{digest}{suffix}"
         chunks.append(
             replace(
                 line,
-                demand_id=f"{line.demand_id[: 40 - len(suffix)]}{suffix}",
+                demand_id=demand_id,
                 total_weight_kg=chunk_weight,
                 total_pallets=chunk_pallets,
                 total_boxes=chunk_boxes,
