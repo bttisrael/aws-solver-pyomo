@@ -30,6 +30,7 @@ from or_aws_fleet.dashboard_data import (
     vehicle_summary,
 )
 from or_aws_fleet.dsql_forecast import run_daily_forecast
+from or_aws_fleet.display_format import compact_whole_number
 from or_aws_fleet.programming_model import VehicleType
 from or_aws_fleet.route_visualization import (
     calculate_cost_efficiency_summary,
@@ -486,11 +487,11 @@ def configuration_screen() -> None:
                     f"was also refreshed (run {forecast_run_id[:8]}). Status: {result.status}."
                 )
                 cols = st.columns(5)
-                cols[0].metric("Vehicles", result.vehicles)
-                cols[1].metric("Routes", result.routes)
-                cols[2].metric("Weight", f"{result.total_weight_kg:,.0f} kg")
-                cols[3].metric("Pallet demand", f"{result.total_pallets:,.1f}")
-                cols[4].metric("Freight cost", f"{result.total_freight_cost:,.2f}")
+                cols[0].metric("Vehicles", compact_whole_number(result.vehicles))
+                cols[1].metric("Routes", compact_whole_number(result.routes))
+                cols[2].metric("Weight", compact_whole_number(result.total_weight_kg))
+                cols[3].metric("Pallet demand", compact_whole_number(result.total_pallets))
+                cols[4].metric("Freight cost", compact_whole_number(result.total_freight_cost))
 
 
 def results_screen() -> None:
@@ -515,13 +516,16 @@ def results_screen() -> None:
     st.markdown('<div class="section-title">Macro results</div>', unsafe_allow_html=True)
     occupancy = vehicles[["weight_utilization", "pallet_utilization"]].max(axis=1).mean() if not vehicles.empty else 0
     metrics = st.columns(7)
-    metrics[0].metric("Vehicles", int(selected["vehicle_count"]))
-    metrics[1].metric("Routes", int(selected["route_count"]))
-    metrics[2].metric("Load items", len(loads))
-    metrics[3].metric("Boxes", f"{vehicles['load_boxes'].sum():,.0f}" if not vehicles.empty else "0")
-    metrics[4].metric("Weight", f"{float(selected['total_weight_kg']):,.0f} kg")
-    metrics[5].metric("Avg. occupancy", f"{occupancy:.1%}")
-    metrics[6].metric("Freight cost", f"{float(selected['total_freight_cost']):,.2f}")
+    metrics[0].metric("Vehicles", compact_whole_number(selected["vehicle_count"]))
+    metrics[1].metric("Routes", compact_whole_number(selected["route_count"]))
+    metrics[2].metric("Load items", compact_whole_number(len(loads)))
+    metrics[3].metric(
+        "Boxes",
+        compact_whole_number(vehicles["load_boxes"].sum()) if not vehicles.empty else "0",
+    )
+    metrics[4].metric("Weight", compact_whole_number(selected["total_weight_kg"]))
+    metrics[5].metric("Avg. occupancy", f"{occupancy:.0%}")
+    metrics[6].metric("Freight cost", compact_whole_number(selected["total_freight_cost"]))
     st.caption(
         f"Programming date: {selected['programming_date']} · Solver: {selected['solver_name']} · "
         f"Status: {selected['status']} · Created: {selected['created_at']}"
@@ -596,11 +600,11 @@ def programming_screen() -> None:
         return
 
     metrics = st.columns(5)
-    metrics[0].metric("Demand lines", f"{len(frame):,}")
-    metrics[1].metric("Origins", frame["origin"].nunique())
-    metrics[2].metric("Destinations", frame["destiny"].nunique())
-    metrics[3].metric("Units", f"{frame['units'].sum():,.0f}")
-    metrics[4].metric("Weight", f"{frame['total_weight_kg'].sum():,.0f} kg")
+    metrics[0].metric("Demand lines", compact_whole_number(len(frame)))
+    metrics[1].metric("Origins", compact_whole_number(frame["origin"].nunique()))
+    metrics[2].metric("Destinations", compact_whole_number(frame["destiny"].nunique()))
+    metrics[3].metric("Units", compact_whole_number(frame["units"].sum()))
+    metrics[4].metric("Weight", compact_whole_number(frame["total_weight_kg"].sum()))
 
     origin = st.multiselect("Filter origins", sorted(frame["origin"].unique()))
     destiny = st.multiselect("Filter destinations", sorted(frame["destiny"].unique()))
@@ -641,20 +645,22 @@ def route_network_screen() -> None:
         unsafe_allow_html=True,
     )
     cost_metrics = st.columns(4)
-    cost_metrics[0].metric("Current freight cost", f"{cost_summary['current_cost']:,.0f}")
+    cost_metrics[0].metric(
+        "Current freight cost", compact_whole_number(cost_summary["current_cost"])
+    )
     cost_metrics[1].metric(
         "Current avoidable cost",
-        f"{cost_summary['current_avoidable']:,.0f}",
+        compact_whole_number(cost_summary["current_avoidable"]),
         help="Theoretical cost opportunity represented by unused current vehicle capacity.",
     )
     cost_metrics[2].metric(
         "21-day forecast cost",
-        f"{cost_summary['forecast_cost']:,.0f}",
+        compact_whole_number(cost_summary["forecast_cost"]),
         help="P50 vehicle requirements multiplied by the latest average freight cost per vehicle.",
     )
     cost_metrics[3].metric(
         "Forecast avoidable cost",
-        f"{cost_summary['forecast_avoidable']:,.0f}",
+        compact_whole_number(cost_summary["forecast_avoidable"]),
         help="Theoretical 21-day cost opportunity represented by forecast unused capacity.",
     )
 
@@ -866,15 +872,15 @@ def route_network_screen() -> None:
             '<div class="section-title">Network overview</div>',
             unsafe_allow_html=True,
         )
-        st.metric("Total routes", f"{len(filtered):,}")
-        st.metric("Active vehicles", f"{int(filtered['vehicle_count'].sum()):,}")
+        st.metric("Total routes", compact_whole_number(len(filtered)))
+        st.metric("Active vehicles", compact_whole_number(filtered["vehicle_count"].sum()))
         st.metric(
             "Average efficiency",
             f"{float(filtered['average_occupancy'].mean()):.0%}",
         )
         st.metric(
             "Total lane distance",
-            f"{filtered['display_distance_km'].sum():,.0f} km",
+            compact_whole_number(filtered["display_distance_km"].sum(), "km"),
         )
 
     with network_map:
@@ -898,12 +904,12 @@ def route_network_screen() -> None:
         selected = filtered.loc[filtered["route"] == route_name].iloc[0]
         st.metric(
             "Driving distance",
-            f"{float(selected['display_distance_km']):,.0f} km",
+            compact_whole_number(selected["display_distance_km"], "km"),
         )
-        st.metric("Vehicles", f"{int(selected['vehicle_count']):,}")
-        st.metric("Loaded weight", f"{float(selected['load_weight_kg']):,.0f} kg")
+        st.metric("Vehicles", compact_whole_number(selected["vehicle_count"]))
+        st.metric("Loaded weight", compact_whole_number(selected["load_weight_kg"]))
         st.metric("Efficiency", f"{float(selected['average_occupancy']):.0%}")
-        st.metric("Freight cost", f"{float(selected['freight_cost']):,.0f}")
+        st.metric("Freight cost", compact_whole_number(selected["freight_cost"]))
 
     st.markdown(
         '<div class="section-title">All route performance</div>',
@@ -957,11 +963,11 @@ def forecast_optimized_screen() -> None:
     p90 = summary.loc[summary["scenario"] == "P90"].copy()
     metrics = st.columns(6)
     metrics[0].metric("Horizon", f"{int(selected_run['horizon_days'])} days")
-    metrics[1].metric("P50 vehicles", f"{int(p50['vehicle_count'].sum()):,}")
-    metrics[2].metric("P90 vehicles", f"{int(p90['vehicle_count'].sum()):,}")
-    metrics[3].metric("P50 units", f"{int(p50['total_units'].sum()):,}")
-    metrics[4].metric("P50 weight", f"{float(p50['total_weight_kg'].sum()):,.0f} kg")
-    metrics[5].metric("Avg. occupancy", f"{float(p50['average_occupancy'].mean()):.1%}")
+    metrics[1].metric("P50 vehicles", compact_whole_number(p50["vehicle_count"].sum()))
+    metrics[2].metric("P90 vehicles", compact_whole_number(p90["vehicle_count"].sum()))
+    metrics[3].metric("P50 units", compact_whole_number(p50["total_units"].sum()))
+    metrics[4].metric("P50 weight", compact_whole_number(p50["total_weight_kg"].sum()))
+    metrics[5].metric("Avg. occupancy", f"{float(p50['average_occupancy'].mean()):.0%}")
     st.caption(
         f"Run date: {selected_run['forecast_run_date']} | Model: {selected_run['model_version']} | "
         f"Status: {selected_run['status']}"
