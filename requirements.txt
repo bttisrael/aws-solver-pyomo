@@ -2,7 +2,7 @@ boto3>=1.42.79,<1.43
 crewai[bedrock]>=1.14.6,<1.15
 fastapi>=0.128.0
 highspy==1.8.1
-numpy==2.2.1
+numpy==2.4.6
 pandas==2.2.3
 scikit-learn>=1.6,<1.7
 joblib>=1.4,<2
